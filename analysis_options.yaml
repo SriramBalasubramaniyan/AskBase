@@ -1,0 +1,18 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_print
+    - prefer_const_constructors
+    - prefer_const_declarations
+    - prefer_final_fields
+    - prefer_final_locals
+    - unnecessary_const
+    - use_super_parameters
+    - sized_box_for_whitespace
+
+analyzer:
+  errors:
+    missing_required_param: error
+    missing_return: error
