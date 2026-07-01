@@ -35,7 +35,7 @@ LlmService.generateSql()          ← schema injected into system prompt
 SQL query (validated, SELECT only)
      │
      ▼
-DbService.runSelect()             ← sqflite, read-only
+DbService.runSelect()             ← sqflite, read-only enforcement via validation
      │
      ▼
 JSON rows (capped at 50)
@@ -51,12 +51,17 @@ Natural language answer
 
 | Item | Value |
 |---|---|
-| Model | Qwen2.5-Coder-1.5B-Instruct |
-| Quantization | Q4_K_M (GGUF) |
-| File size | ~986 MB |
-| RAM at runtime | ~1.3 GB |
-| Inference engine | fllama (llama.cpp) |
-| Download source | HuggingFace (bartowski) |
+| Model | Qwen 2.5 0.5B Instruct |
+| Format | MediaPipe `.task` |
+| File size | ~500 MB |
+| Inference engine | flutter_gemma + MediaPipe tasks-genai |
+| Android ABIs | armeabi-v7a ✅  arm64-v8a ✅  x86_64 ✅ |
+| Download source | HuggingFace (litert-community) |
+| Internet after setup | Not required |
+
+**Why flutter_gemma + MediaPipe `.task`?**
+
+Every other Flutter on-device LLM package (nobodywho, llama_cpp_dart, fllama) only ships `arm64-v8a` and `x86_64` native binaries. Many budget Android devices — particularly Samsung M-series and other low-cost field devices — run a 32-bit `armeabi-v7a` Android image. Google's MediaPipe `tasks-genai` is the only runtime that explicitly ships all three ABI variants, making it the correct choice for maximum device compatibility.
 
 The model is **not bundled** with the APK. On first launch the app shows a one-time download screen. After download the model lives in the app's private documents directory and is never re-downloaded.
 
@@ -119,14 +124,14 @@ askbase/
 
 ### Prerequisites
 
-- Flutter 3.22+ with Dart 3.3+
-- Android SDK 23+ (Android 5.0 minimum)
-- ~2 GB free storage on the device for the model
+- Flutter 3.32.8 (stable) with Dart 3.8.x
+- Android SDK 24+ (Android 7.0 minimum)
+- ~600 MB free storage on device for the model
 
 ### 1. Clone and install dependencies
 
 ```bash
-git clone https://github.com/SriramBalasubramaniyan/AskBase.git
+git clone https://github.com/your-org/askbase.git
 cd askbase
 flutter pub get
 ```
@@ -138,8 +143,6 @@ Copy your SQLite database to the assets folder:
 ```bash
 cp your_database.db assets/agri.db
 ```
-
-The file is already declared in `pubspec.yaml`. If you rename it, update both `pubspec.yaml` and your schema file.
 
 ### 3. Build and run
 
@@ -164,7 +167,6 @@ AskBase is domain-agnostic. To use it with any other SQLite database:
 
 ```bash
 cp your_new_database.db assets/agri.db
-# Or rename and update pubspec.yaml + schema
 ```
 
 ### Step 2 — Create a new schema file
@@ -203,7 +205,6 @@ final yourSchema = DatabaseSchema(
         ),
       ],
     ),
-    // add more tables...
   ],
 );
 ```
@@ -213,12 +214,10 @@ final yourSchema = DatabaseSchema(
 ```dart
 // Before
 import 'schema/agri_schema.dart';
-// ...
 create: (_) => AppState(agriSchema)..initialize(),
 
 // After
 import 'schema/your_schema.dart';
-// ...
 create: (_) => AppState(yourSchema)..initialize(),
 ```
 
@@ -247,10 +246,10 @@ That's it. No other file needs to change.
 The description is what the model reads to understand what each column means. Be specific:
 
 ```dart
-// ❌ Too vague — model won't know what to do with this
+// ❌ Too vague
 FieldDef(name: 'qty', type: FieldType.real, description: 'Quantity')
 
-// ✅ Specific — model generates accurate queries
+// ✅ Specific
 FieldDef(
   name: 'quantity_kg',
   type: FieldType.real,
@@ -273,7 +272,7 @@ FieldDef(
 ## Security
 
 - Only `SELECT` statements are allowed. Any query containing `DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `CREATE`, `REPLACE`, `TRUNCATE`, `ATTACH`, `DETACH`, or `PRAGMA` is rejected before execution.
-- The database is opened in **read-only** mode via sqflite.
+- The database is opened without write permissions enforced at the application layer via `validateSql()`.
 - The model file is stored in the app's private documents directory (not accessible to other apps).
 - No data is sent to any server. The model runs 100% on-device.
 
@@ -282,27 +281,21 @@ FieldDef(
 ## Troubleshooting
 
 ### Model download fails
-
-- Check the device has internet access
-- Confirm WiFi is connected (recommended for 986 MB download)
-- The download resumes from scratch if cancelled — partial files are deleted automatically
-- HuggingFace CDN occasionally has rate limits; retry after a few minutes
+- Check device has internet access and WiFi is connected
+- The download is ~500 MB — use WiFi to avoid mobile data charges
+- Retry if HuggingFace CDN times out
 
 ### App crashes during inference
-
-- The device may not have enough free RAM (~1.3 GB required at runtime)
+- Ensure device has at least 1.5 GB free RAM
 - Close background apps and retry
-- On very low-end devices (< 2 GB RAM), consider testing on a device with more RAM
+- The MediaPipe engine falls back to CPU automatically if GPU is unavailable
 
 ### Model gives wrong SQL
-
-- Improve your field descriptions in the schema file — the more specific, the better
+- Improve field descriptions in the schema file — more specific = better SQL
 - Add `foreignKeyRef` to all foreign key fields so the model knows how to JOIN
-- For complex multi-table queries, the 1.5B model may occasionally make mistakes; rephrase the question more specifically
+- Rephrase the question more specifically for complex multi-table queries
 
 ### "No records found" for valid questions
-
-- The question may be using a name or value that differs from what's in the database
 - Ask "what farmers are there?" first to confirm exact names before filtering by name
 
 ---
@@ -312,15 +305,27 @@ FieldDef(
 | Package | Version | Purpose |
 |---|---|---|
 | `sqflite` | ^2.3.3 | SQLite access |
-| `fllama` | ^0.6.0 | On-device GGUF inference (llama.cpp) |
-| `dio` | ^5.4.3 | Model download with progress |
+| `flutter_gemma` | ^0.15.0 | On-device inference orchestration |
+| `flutter_gemma_mediapipe` | ^0.15.0 | MediaPipe engine (ships armeabi-v7a binaries) |
+| `dio` | ^5.4.3 | Fallback download if needed |
 | `path_provider` | ^2.1.3 | App documents directory |
 | `provider` | ^6.1.2 | State management |
-| `google_fonts` | ^6.2.1 | DM Sans typeface |
+| `google_fonts` | ^6.4.0 | DM Sans typeface |
 | `flutter_markdown` | ^0.7.3 | Markdown rendering in bubbles |
 | `connectivity_plus` | ^6.0.3 | WiFi check before download |
 | `shared_preferences` | ^2.2.3 | Model-ready flag persistence |
 | `intl` | ^0.19.0 | Timestamp formatting |
+
+---
+
+## Flutter SDK
+
+**Required: Flutter 3.32.8 (stable), Dart 3.8.x**
+
+Flutter 3.32.x is the recommended version because:
+- Dart 3.8.x satisfies `flutter_gemma`'s SDK constraint
+- AGP 8.6.0 + Gradle 8.9 work without manual patching
+- `google_fonts 6.4.0` resolves the `FontWeight` const map bug present in 6.3.x on Dart 3.8
 
 ---
 
@@ -332,6 +337,7 @@ MIT License. See `LICENSE` for details.
 
 ## Credits
 
-- Model: [Qwen2.5-Coder-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct) by Alibaba Cloud
-- GGUF quantization: [bartowski](https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF)
-- Inference engine: [llama.cpp](https://github.com/ggerganov/llama.cpp) via [fllama](https://pub.dev/packages/fllama)
+- Model: [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) by Alibaba Cloud
+- MediaPipe task format: [litert-community](https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct)
+- Inference runtime: [Google MediaPipe tasks-genai](https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference)
+- Flutter plugin: [flutter_gemma](https://pub.dev/packages/flutter_gemma) by Volodymyr Khlinovskyi
