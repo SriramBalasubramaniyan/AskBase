@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_gemma/core/api/flutter_gemma.dart';
+import 'package:flutter_gemma_mediapipe/flutter_gemma_mediapipe.dart';
 import 'package:provider/provider.dart';
-import 'package:nobodywho/nobodywho.dart' as nw;
 
 // Schema — swap this import to change the active database domain
 import 'schema/agri_schema.dart';
@@ -16,9 +17,12 @@ import 'ui/widgets/error_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await nw.NobodyWho.init();
+  // Register MediaPipe engine — handles .task models on Android/iOS
+  // This is what provides armeabi-v7a support via Google's tasks-genai
+  FlutterGemma.initialize(
+    inferenceEngines: [MediaPipeEngine()],
+  );
 
-  // Lock to portrait — designed for field use on phones
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -56,8 +60,6 @@ class AskBaseApp extends StatelessWidget {
   }
 }
 
-/// Routes to the correct screen based on AppState status.
-/// This is the single place that decides what the user sees.
 class _RootRouter extends StatelessWidget {
   const _RootRouter();
 
@@ -68,19 +70,14 @@ class _RootRouter extends StatelessWidget {
     switch (state.status) {
       case AppStatus.initializing:
         return SplashScreen(message: state.statusMessage);
-
       case AppStatus.needsDownload:
         return const DownloadScreen();
-
       case AppStatus.downloading:
         return const DownloadScreen();
-
       case AppStatus.loading:
         return SplashScreen(message: state.statusMessage);
-
       case AppStatus.ready:
         return const ChatScreen();
-
       case AppStatus.error:
         return ErrorScreen(
           message: state.errorMessage ?? 'An unexpected error occurred.',

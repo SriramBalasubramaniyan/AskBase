@@ -16,13 +16,17 @@ dependencies:
   path_provider: ^2.1.3
 
   # On-device LLM inference
-  nobodywho: ^2.0.0
+  # flutter_gemma uses Google MediaPipe tasks-genai which ships armeabi-v7a,
+  # arm64-v8a AND x86_64 binaries — the only Flutter LLM package that works
+  # on 32-bit Android devices. Uses .task model format (MediaPipe-optimized).
+  flutter_gemma: ^0.15.0
+  flutter_gemma_mediapipe: ^0.15.0
 
   # Networking (model download)
   dio: ^5.4.3
 
   # UI
-  google_fonts: ^6.3.0
+  google_fonts: ^6.4.0
   flutter_markdown: ^0.7.3
 
   # Utilities

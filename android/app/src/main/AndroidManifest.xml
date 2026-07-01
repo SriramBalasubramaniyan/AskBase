@@ -1,20 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Internet required for one-time model download -->
     <uses-permission android:name="android.permission.INTERNET" />
-
-    <!-- Network state check before download -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Read external storage (Android < 10 fallback) -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28"/>
+    <!-- flutter_gemma foreground service for large downloads (>500MB) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:label="AskBase"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="false"
         android:hardwareAccelerated="true"
         android:largeHeap="true">
@@ -39,15 +35,29 @@
             </intent-filter>
         </activity>
 
-        <!-- Do not remove the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <!-- flutter_gemma foreground service for large model downloads -->
+        <service
+            android:name="com.vladihq.flutter_background_downloader.DownloadWorker"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Optional: GPU acceleration via OpenCL -->
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false"/>
+        <uses-native-library
+            android:name="libOpenCL-car.so"
+            android:required="false"/>
+        <uses-native-library
+            android:name="libOpenCL-pixel.so"
+            android:required="false"/>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
     </application>
 
-    <!-- Required for Android 12+ to allow downloading from HuggingFace (HTTPS only) -->
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />

@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'package:dio/dio.dart' show CancelToken;
 import 'package:flutter/foundation.dart';
 
 import '../models/chat_message.dart';
@@ -19,9 +17,8 @@ class AppState extends ChangeNotifier {
   String _statusMessage = 'Starting…';
   String? _errorMessage;
 
-  int _downloadedBytes = 0;
-  int _totalBytes = 0;
-  CancelToken? _downloadCancelToken;
+  // Download progress 0–100
+  int _downloadProgress = 0;
 
   final List<ChatMessage> _messages = [];
   bool _isProcessing = false;
@@ -33,11 +30,7 @@ class AppState extends ChangeNotifier {
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   bool get isProcessing => _isProcessing;
   DatabaseSchema get schema => _schema;
-
-  double get downloadProgress =>
-      _totalBytes > 0 ? _downloadedBytes / _totalBytes : 0.0;
-  int get downloadedMB => _downloadedBytes ~/ (1024 * 1024);
-  int get totalMB => _totalBytes ~/ (1024 * 1024);
+  int get downloadProgress => _downloadProgress;
 
   // ── Initialisation ────────────────────────────────────────────────────────
 
@@ -76,14 +69,12 @@ class AppState extends ChangeNotifier {
   // ── Download ──────────────────────────────────────────────────────────────
 
   Future<void> startDownload() async {
-    _downloadCancelToken = CancelToken();
+    _downloadProgress = 0;
     _setStatus(AppStatus.downloading, 'Downloading model…');
 
     await LlmService.instance.downloadModel(
-      cancelToken: _downloadCancelToken,
-      onProgress: (received, total) {
-        _downloadedBytes = received;
-        _totalBytes = total;
+      onProgress: (progress) {
+        _downloadProgress = progress;
         notifyListeners();
       },
       onDone: () async {
@@ -98,9 +89,8 @@ class AppState extends ChangeNotifier {
   }
 
   void cancelDownload() {
-    _downloadCancelToken?.cancel('User cancelled');
-    _downloadedBytes = 0;
-    _totalBytes = 0;
+    // flutter_gemma handles cancellation internally
+    _downloadProgress = 0;
     _setStatus(AppStatus.needsDownload, 'Download cancelled');
   }
 

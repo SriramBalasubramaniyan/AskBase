@@ -1,21 +1,24 @@
 import 'dart:async';
-import 'dart:io';
 
-import 'package:dio/dio.dart' as dio_pkg;
-import 'package:nobodywho/nobodywho.dart' as nw;
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter_gemma/core/api/flutter_gemma.dart';
+import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/db_schema_model.dart';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const _modelFileName = 'Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf';
+// Qwen 2.5 0.5B in MediaPipe .task format
+// - 0.5GB download
+// - Works on armeabi-v7a, arm64-v8a, x86_64
+// - No HuggingFace token required (public model)
+// - Strong SQL generation at small size
+const _modelFileName = 'Qwen2.5-0.5B-Instruct.task';
 const _modelDownloadUrl =
-    'https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF'
-    '/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf';
-const _prefKeyModelReady = 'model_ready';
+    'https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct'
+    '/resolve/main/Qwen2.5-0.5B-Instruct.task';
+
+const _prefKeyModelReady = 'model_ready_fg';
 
 // ── LLM Service ───────────────────────────────────────────────────────────────
 
@@ -24,72 +27,49 @@ class LlmService {
   static final LlmService instance = LlmService._();
 
   bool _modelLoaded = false;
-  String? _modelPath;
+  InferenceModel? _model;
 
-  // ── Model path ────────────────────────────────────────────────────────────
-
-  Future<String> _getModelPath() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return p.join(dir.path, 'askbase', 'models', _modelFileName);
-  }
+  // ── Model status ──────────────────────────────────────────────────────────
 
   Future<bool> isModelDownloaded() async {
-    final path = await _getModelPath();
-    return File(path).existsSync();
+    final isInstalled = await FlutterGemma.isModelInstalled(_modelFileName);
+    return isInstalled;
   }
 
   // ── Download ──────────────────────────────────────────────────────────────
 
+  /// Downloads the .task model via flutter_gemma's built-in downloader.
+  /// [onProgress] receives 0–100 int.
   Future<void> downloadModel({
-    required void Function(int received, int total) onProgress,
+    required void Function(int progress) onProgress,
     required void Function() onDone,
     required void Function(String error) onError,
-    dio_pkg.CancelToken? cancelToken,
   }) async {
-    final path = await _getModelPath();
-    await Directory(p.dirname(path)).create(recursive: true);
-
-    final dio = dio_pkg.Dio();
-
     try {
-      await dio.download(
-        _modelDownloadUrl,
-        path,
-        cancelToken: cancelToken,
-        deleteOnError: true,
-        onReceiveProgress: (received, total) {
-          if (total > 0) onProgress(received, total);
-        },
-        options: dio_pkg.Options(
-          receiveTimeout: const Duration(hours: 2),
-          headers: {'User-Agent': 'AskBase/1.0'},
-        ),
-      );
+      await FlutterGemma.installModel(
+        modelType: ModelType.qwen,
+      )
+          .fromNetwork(_modelDownloadUrl)
+          .withProgress((progress) => onProgress(progress))
+          .install();
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefKeyModelReady, true);
       onDone();
-    } on dio_pkg.DioException catch (e) {
-      if (e.type == dio_pkg.DioExceptionType.cancel) return;
-      final f = File(path);
-      if (f.existsSync()) await f.delete();
-      onError('Download failed: ${e.message}');
     } catch (e) {
-      onError('Unexpected error: $e');
+      onError('Download failed: $e');
     }
   }
 
   // ── Load model ────────────────────────────────────────────────────────────
 
-  /// Verifies the model file exists. nobodywho loads lazily per-chat session.
   Future<void> loadModel() async {
     if (_modelLoaded) return;
-    _modelPath = await _getModelPath();
-    if (!File(_modelPath!).existsSync()) {
-      throw StateError('Model file not found. Download it first.');
-    }
-    // nobodywho initialises the runtime globally once
-    await nw.NobodyWho.init();
+
+    _model = await FlutterGemma.getActiveModel(
+      maxTokens: 1024,
+      preferredBackend: PreferredBackend.cpu, // CPU for armeabi-v7a compatibility
+    );
     _modelLoaded = true;
   }
 
@@ -98,24 +78,24 @@ class LlmService {
   // ── SQL Generation ────────────────────────────────────────────────────────
 
   /// Generates a SQL SELECT query from a natural language question.
-  /// Creates a fresh chat session per call so the model has no prior context
-  /// bleeding in from summarization calls.
+  /// Uses a fresh chat session so SQL context doesn't bleed into summarization.
   Future<String> generateSql({
     required String userQuestion,
     required DatabaseSchema schema,
   }) async {
     _assertLoaded();
 
-    final chat = await nw.Chat.fromPath(
-      modelPath: _modelPath!,
-      systemPrompt: _buildSqlSystemPrompt(schema),
-      sampler: nw.SamplerPresets.temperature(temperature: 0.1),
+    final chat = await _model!.createChat(
+      systemInstruction: _buildSqlSystemPrompt(schema),
     );
 
-    final response = await chat
-        .ask('Question: $userQuestion\n\nSQL:')
-        .completed();
-    return _extractSql(response);
+    await chat.addQueryChunk(Message.text(
+      text: 'Question: $userQuestion\n\nSQL:',
+      isUser: true,
+    ));
+
+    final response = await chat.generateChatResponse();
+    return _extractSql(response ?? '');
   }
 
   // ── Summarization ─────────────────────────────────────────────────────────
@@ -130,6 +110,10 @@ class LlmService {
   }) async {
     _assertLoaded();
 
+    final chat = await _model!.createChat(
+      systemInstruction: _buildSummarySystemPrompt(schema),
+    );
+
     final prompt = [
       'User asked: $userQuestion',
       'Query used: $sqlQuery',
@@ -137,20 +121,18 @@ class LlmService {
       'Summary:',
     ].join('\n\n');
 
+    await chat.addQueryChunk(Message.text(text: prompt, isUser: true));
+
     final buffer = StringBuffer();
 
-    final chat = await nw.Chat.fromPath(
-      modelPath: _modelPath!,
-      systemPrompt: _buildSummarySystemPrompt(schema),
-      sampler: nw.SamplerPresets.temperature(temperature: 0.3),
-    );
-
-    final stream = chat.ask(prompt);
-
-    await for (final token in stream) {
-      buffer.write(token);
-      onToken(token);
+    // Stream tokens via generateChatResponseAsync
+    await for (final response in chat.generateChatResponseAsync()) {
+      if (response is TextResponse) {
+        buffer.write(response.token);
+        onToken(response.token);
+      }
     }
+
     return buffer.toString().trim();
   }
 
@@ -191,9 +173,15 @@ Explain database results in clear, simple language.
   }
 
   void _assertLoaded() {
-    if (!_modelLoaded || _modelPath == null) {
+    if (!_modelLoaded || _model == null) {
       throw StateError('Model not loaded. Call loadModel() first.');
     }
+  }
+
+  Future<void> dispose() async {
+    await _model?.close();
+    _model = null;
+    _modelLoaded = false;
   }
 
   String get modelFileName => _modelFileName;
