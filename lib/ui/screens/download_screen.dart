@@ -52,8 +52,8 @@ class DownloadScreen extends StatelessWidget {
               const SizedBox(height: 40),
 
               // ── Model info card ──────────────────────────────────────────
-              _InfoCard(
-                rows: const [
+              const _InfoCard(
+                rows: [
                   ('Model', 'Qwen 2.5 0.5B (MediaPipe .task)'),
                   ('Download size', '~500 MB'),
                   ('Works on', 'All Android devices'),

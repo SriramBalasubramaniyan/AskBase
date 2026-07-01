@@ -1,9 +1,6 @@
 import 'dart:async';
-
-import 'package:flutter_gemma/core/api/flutter_gemma.dart';
 import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../models/db_schema_model.dart';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -95,7 +92,7 @@ class LlmService {
     ));
 
     final response = await chat.generateChatResponse();
-    return _extractSql(response ?? '');
+    return _extractSql(response.toString());
   }
 
   // ── Summarization ─────────────────────────────────────────────────────────

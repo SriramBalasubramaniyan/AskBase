@@ -20,7 +20,7 @@ void main() async {
   // Register MediaPipe engine — handles .task models on Android/iOS
   // This is what provides armeabi-v7a support via Google's tasks-genai
   FlutterGemma.initialize(
-    inferenceEngines: [MediaPipeEngine()],
+    inferenceEngines: [const MediaPipeEngine()],
   );
 
   await SystemChrome.setPreferredOrientations([
