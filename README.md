@@ -53,17 +53,13 @@ Natural language answer
 |---|---|
 | Model | Qwen 2.5 0.5B Instruct |
 | Format | MediaPipe `.task` |
-| File size | ~500 MB |
+| Filename | `Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task` |
+| File size | ~547 MB |
+| Max tokens (input + output) | 1280 (set by `ekv1280` in filename — hard limit) |
 | Inference engine | flutter_gemma + MediaPipe tasks-genai |
 | Android ABIs | armeabi-v7a ✅  arm64-v8a ✅  x86_64 ✅ |
 | Download source | HuggingFace (litert-community) |
 | Internet after setup | Not required |
-
-**Why flutter_gemma + MediaPipe `.task`?**
-
-Every other Flutter on-device LLM package (nobodywho, llama_cpp_dart, fllama) only ships `arm64-v8a` and `x86_64` native binaries. Many budget Android devices — particularly Samsung M-series and other low-cost field devices — run a 32-bit `armeabi-v7a` Android image. Google's MediaPipe `tasks-genai` is the only runtime that explicitly ships all three ABI variants, making it the correct choice for maximum device compatibility.
-
-The model is **not bundled** with the APK. On first launch the app shows a one-time download screen. After download the model lives in the app's private documents directory and is never re-downloaded.
 
 ### Database
 
@@ -124,7 +120,7 @@ askbase/
 
 ### Prerequisites
 
-- Flutter 3.32.8 (stable) with Dart 3.8.x
+- Flutter 3.41.1 (stable), Dart 3.8.x
 - Android SDK 24+ (Android 7.0 minimum)
 - ~600 MB free storage on device for the model
 
@@ -267,6 +263,10 @@ FieldDef(
 )
 ```
 
+### Token budget awareness
+
+The model has a hard limit of **1280 tokens** (input + output combined). The system prompt + schema + user question must leave enough room for the SQL output. Keep field descriptions concise — the compact prompt format in `llm_service.dart` is already optimised for this limit. If you add many tables, monitor token usage — overly verbose descriptions will cause the model to crash with an `OUT_OF_RANGE` error.
+
 ---
 
 ## Security
@@ -282,13 +282,26 @@ FieldDef(
 
 ### Model download fails
 - Check device has internet access and WiFi is connected
-- The download is ~500 MB — use WiFi to avoid mobile data charges
+- The download is ~547 MB — use WiFi to avoid mobile data charges
 - Retry if HuggingFace CDN times out
 
-### App crashes during inference
+### App crashes during inference with OUT_OF_RANGE error
+- The system prompt + schema exceeded the model's 1280 token limit
+- Shorten field descriptions in your schema file
+- The compact prompt format in `_buildSqlSystemPrompt` is already optimised — avoid reverting to verbose prompts
+
+### SQL shown as `TextResponse("SELECT ...")` instead of plain SQL
+- This means `generateChatResponse()` returned a `TextResponse` object rather than a plain string
+- Fix: unwrap with `response is TextResponse ? response.token : response?.toString() ?? ''` in `llm_service.dart`
+
+### "The generated query was not safe to run"
+- Usually caused by the `TextResponse` wrapping issue above — the validator sees `TextResponse(...)` which doesn't start with `select`
+- Also check if the model output any preamble before the SQL — the `_extractSql` method strips markdown fences but not prose preamble
+
+### App crashes during inference (out of memory)
 - Ensure device has at least 1.5 GB free RAM
 - Close background apps and retry
-- The MediaPipe engine falls back to CPU automatically if GPU is unavailable
+- The MediaPipe engine runs CPU-only on armeabi-v7a devices
 
 ### Model gives wrong SQL
 - Improve field descriptions in the schema file — more specific = better SQL
@@ -307,10 +320,10 @@ FieldDef(
 | `sqflite` | ^2.3.3 | SQLite access |
 | `flutter_gemma` | ^0.15.0 | On-device inference orchestration |
 | `flutter_gemma_mediapipe` | ^0.15.0 | MediaPipe engine (ships armeabi-v7a binaries) |
-| `dio` | ^5.4.3 | Fallback download if needed |
+| `dio` | ^5.4.3 | Model download with progress |
 | `path_provider` | ^2.1.3 | App documents directory |
 | `provider` | ^6.1.2 | State management |
-| `google_fonts` | ^6.4.0 | DM Sans typeface |
+| `google_fonts` | 6.3.2 | DM Sans typeface — pinned exactly; 6.3.0/6.3.1 broken on Dart 3.8 |
 | `flutter_markdown` | ^0.7.3 | Markdown rendering in bubbles |
 | `connectivity_plus` | ^6.0.3 | WiFi check before download |
 | `shared_preferences` | ^2.2.3 | Model-ready flag persistence |
@@ -320,18 +333,12 @@ FieldDef(
 
 ## Flutter SDK
 
-**Required: Flutter 3.32.8 (stable), Dart 3.8.x**
+**Required: Flutter 3.41.1 (stable), Dart 3.8.x**
 
-Flutter 3.32.x is the recommended version because:
-- Dart 3.8.x satisfies `flutter_gemma`'s SDK constraint
-- AGP 8.6.0 + Gradle 8.9 work without manual patching
-- `google_fonts 6.4.0` resolves the `FontWeight` const map bug present in 6.3.x on Dart 3.8
-
----
-
-## License
-
-MIT License. See `LICENSE` for details.
+Key version constraints:
+- `google_fonts` pinned to `6.3.2` — versions 6.3.0 and 6.3.1 have a broken `FontWeight` const map on Dart 3.8; 6.3.2 fixes it
+- `flutter_gemma ^0.15.0` requires Dart 3.8+
+- Android `minSdk 24` required by flutter_gemma MediaPipe engine
 
 ---
 

@@ -18,7 +18,6 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Register MediaPipe engine — handles .task models on Android/iOS
-  // This is what provides armeabi-v7a support via Google's tasks-genai
   FlutterGemma.initialize(
     inferenceEngines: [const MediaPipeEngine()],
   );

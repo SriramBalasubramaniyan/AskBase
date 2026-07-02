@@ -28,21 +28,6 @@ class _ChatBubbleState extends State<ChatBubble> {
         crossAxisAlignment:
             isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          // ── Role label ─────────────────────────────────────────────────
-          Padding(
-            padding: EdgeInsets.only(
-              left: isUser ? 0 : 4,
-              right: isUser ? 4 : 0,
-              bottom: 4,
-            ),
-            child: Text(
-              isUser ? 'You' : 'AskBase',
-              style: AppTextStyles.caption.copyWith(
-                color: isUser ? AppColors.textMuted : AppColors.accent,
-              ),
-            ),
-          ),
-
           // ── Bubble ─────────────────────────────────────────────────────
           Container(
             constraints: BoxConstraints(

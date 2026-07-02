@@ -15,7 +15,7 @@ class DownloadScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.surface,
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 28),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -117,7 +117,7 @@ class DownloadScreen extends StatelessWidget {
                 ),
               ],
 
-              const Spacer(),
+              const SizedBox(height: 40),
 
               SizedBox(
                 width: double.infinity,

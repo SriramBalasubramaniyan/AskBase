@@ -24,8 +24,6 @@ android {
         targetSdk flutter.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
-        // flutter_gemma MediaPipe ships armeabi-v7a, arm64-v8a, x86_64
-        // No abiFilter needed — all three work
     }
 
     buildTypes {

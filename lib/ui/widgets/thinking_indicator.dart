@@ -56,13 +56,6 @@ class _ThinkingIndicatorState extends State<ThinkingIndicator>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 4, bottom: 4),
-            child: Text(
-              'AskBase',
-              style: AppTextStyles.caption.copyWith(color: AppColors.accent),
-            ),
-          ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
@@ -80,13 +73,6 @@ class _ThinkingIndicatorState extends State<ThinkingIndicator>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  'Generating query',
-                  style: AppTextStyles.bodySecondary.copyWith(
-                    color: AppColors.textMuted,
-                  ),
-                ),
-                const SizedBox(width: 10),
                 ...List.generate(
                   3,
                   (i) => AnimatedBuilder(

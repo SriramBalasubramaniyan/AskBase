@@ -6,14 +6,11 @@ import '../models/db_schema_model.dart';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 // Qwen 2.5 0.5B in MediaPipe .task format
-// - 0.5GB download
-// - Works on armeabi-v7a, arm64-v8a, x86_64
-// - No HuggingFace token required (public model)
-// - Strong SQL generation at small size
-const _modelFileName = 'Qwen2.5-0.5B-Instruct.task';
+const _modelFileName =
+    'Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task';
 const _modelDownloadUrl =
     'https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct'
-    '/resolve/main/Qwen2.5-0.5B-Instruct.task';
+    '/resolve/main/Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task';
 
 const _prefKeyModelReady = 'model_ready_fg';
 
@@ -21,6 +18,7 @@ const _prefKeyModelReady = 'model_ready_fg';
 
 class LlmService {
   LlmService._();
+
   static final LlmService instance = LlmService._();
 
   bool _modelLoaded = false;
@@ -64,8 +62,9 @@ class LlmService {
     if (_modelLoaded) return;
 
     _model = await FlutterGemma.getActiveModel(
-      maxTokens: 1024,
-      preferredBackend: PreferredBackend.cpu, // CPU for armeabi-v7a compatibility
+      maxTokens: 1280,
+      preferredBackend:
+          PreferredBackend.cpu, // CPU for armeabi-v7a compatibility
     );
     _modelLoaded = true;
   }
@@ -92,7 +91,10 @@ class LlmService {
     ));
 
     final response = await chat.generateChatResponse();
-    return _extractSql(response.toString());
+    final sqlText = response is TextResponse
+        ? response.token
+        : response.toString();
+    return _extractSql(sqlText);
   }
 
   // ── Summarization ─────────────────────────────────────────────────────────
@@ -135,7 +137,7 @@ class LlmService {
 
   // ── Prompt builders ───────────────────────────────────────────────────────
 
-  String _buildSqlSystemPrompt(DatabaseSchema schema) {
+  /*String _buildSqlSystemPrompt(DatabaseSchema schema) {
     return '''You are a SQLite expert. Your ONLY job is to write a single valid SQLite SELECT query.
 
 RULES:
@@ -148,25 +150,44 @@ RULES:
 7. If the question is unrelated to this database, output: OUT_OF_SCOPE
 
 ${schema.toFullPrompt()}''';
+  }*/
+
+  String _buildSqlSystemPrompt(DatabaseSchema schema) {
+    final schemaLines = StringBuffer();
+    for (final table in schema.tables) {
+      final cols = table.fields.map((f) {
+        final fk = f.foreignKeyRef != null ? '→${f.foreignKeyRef}' : '';
+        return '${f.name}$fk';
+      }).join(', ');
+      schemaLines.writeln('${table.tableName}($cols)');
+    }
+
+    return '''SQLite expert. Output ONLY a valid SELECT query or CANNOT_ANSWER or OUT_OF_SCOPE.
+      Rules: SELECT only. Use aliases in JOINs. LIMIT 100 if unspecified. Dates are TEXT YYYY-MM-DD.
+      
+      SCHEMA:
+      ${schemaLines.toString().trim()}''';
   }
+
+  /*String _buildSummarySystemPrompt(DatabaseSchema schema) {
+    return '''You are a helpful assistant for ${schema.databaseName}.
+      Explain database results in clear, simple language.
+      - Answer only from the data provided. Never add outside information.
+      - If results are empty, say no matching records were found.
+      - Keep answers concise: 1 to 4 sentences.
+      - Format numbers clearly (e.g. "1,250.5 kg").
+      - Do not mention SQL, queries, rows, or technical terms.''';
+  }*/
 
   String _buildSummarySystemPrompt(DatabaseSchema schema) {
-    return '''You are a helpful assistant for ${schema.databaseName}.
-Explain database results in clear, simple language.
-- Answer only from the data provided. Never add outside information.
-- If results are empty, say no matching records were found.
-- Keep answers concise: 1 to 4 sentences.
-- Format numbers clearly (e.g. "1,250.5 kg").
-- Do not mention SQL, queries, rows, or technical terms.''';
+    return '''Explain these ${schema.databaseName} query results in 1-3 plain sentences. 
+    Results are empty, say no matching records were found.
+    Only use the data given. No SQL terms.''';
   }
-
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   String _extractSql(String raw) {
-    return raw
-        .replaceAll('```sql', '')
-        .replaceAll('```', '')
-        .trim();
+    return raw.replaceAll('```sql', '').replaceAll('```', '').trim();
   }
 
   void _assertLoaded() {
@@ -182,5 +203,6 @@ Explain database results in clear, simple language.
   }
 
   String get modelFileName => _modelFileName;
+
   String get downloadUrl => _modelDownloadUrl;
 }
