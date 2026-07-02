@@ -100,7 +100,7 @@ class LlmService {
   // ── Summarization ─────────────────────────────────────────────────────────
 
   /// Summarizes DB rows as natural language, streaming tokens via [onToken].
-  Future<String> summarizeResults({
+  /*Future<String> summarizeResults({
     required String userQuestion,
     required String sqlQuery,
     required String jsonRows,
@@ -133,23 +133,69 @@ class LlmService {
     }
 
     return buffer.toString().trim();
+  }*/
+
+  Future<String> summarizeResults({
+    required String userQuestion,
+    required String sqlQuery,
+    required String jsonRows,
+    required DatabaseSchema schema,
+    required void Function(String token) onToken,
+  }) async {
+    _assertLoaded();
+
+    final chat = await _model!.createChat(
+      systemInstruction: _buildSummarySystemPrompt(schema),
+    );
+
+    final prompt = [
+      'User asked: $userQuestion',
+      'Results: $jsonRows',
+      'Summary:',
+    ].join('\n\n');
+
+    await chat.addQueryChunk(Message.text(text: prompt, isUser: true));
+
+    final buffer = StringBuffer();
+    String lastCumulative = '';
+
+    await for (final response in chat.generateChatResponseAsync()) {
+      // Extract the raw text from the response object
+      final fullText = response is TextResponse
+          ? response.token
+          : response.toString();
+
+      // Derive delta by subtracting what we've already seen
+      if (fullText.length > lastCumulative.length) {
+        final delta = fullText.substring(lastCumulative.length);
+        buffer.write(delta);
+        onToken(delta);
+        lastCumulative = fullText;
+      } else if (lastCumulative.isEmpty) {
+        // First token — take as-is
+        buffer.write(fullText);
+        onToken(fullText);
+        lastCumulative = fullText;
+      }
+    }
+
+    return buffer.toString().trim();
   }
 
   // ── Prompt builders ───────────────────────────────────────────────────────
 
   /*String _buildSqlSystemPrompt(DatabaseSchema schema) {
     return '''You are a SQLite expert. Your ONLY job is to write a single valid SQLite SELECT query.
+    RULES:
+    1. Output ONLY the SQL query. No explanation, no markdown, no preamble.
+    2. Use only tables and columns that exist in the schema below. If unavailable, output: CANNOT_ANSWER
+    3. Always use table aliases in JOINs.
+    4. Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, or PRAGMA.
+    5. Add LIMIT 100 if no limit is specified and the query could return many rows.
+    6. Date columns are TEXT in YYYY-MM-DD format — use strftime() for date operations.
+    7. If the question is unrelated to this database, output: OUT_OF_SCOPE
 
-RULES:
-1. Output ONLY the SQL query. No explanation, no markdown, no preamble.
-2. Use only tables and columns that exist in the schema below. If unavailable, output: CANNOT_ANSWER
-3. Always use table aliases in JOINs.
-4. Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, or PRAGMA.
-5. Add LIMIT 100 if no limit is specified and the query could return many rows.
-6. Date columns are TEXT in YYYY-MM-DD format — use strftime() for date operations.
-7. If the question is unrelated to this database, output: OUT_OF_SCOPE
-
-${schema.toFullPrompt()}''';
+    ${schema.toFullPrompt()}''';
   }*/
 
   String _buildSqlSystemPrompt(DatabaseSchema schema) {
@@ -171,12 +217,12 @@ ${schema.toFullPrompt()}''';
 
   /*String _buildSummarySystemPrompt(DatabaseSchema schema) {
     return '''You are a helpful assistant for ${schema.databaseName}.
-      Explain database results in clear, simple language.
-      - Answer only from the data provided. Never add outside information.
-      - If results are empty, say no matching records were found.
-      - Keep answers concise: 1 to 4 sentences.
-      - Format numbers clearly (e.g. "1,250.5 kg").
-      - Do not mention SQL, queries, rows, or technical terms.''';
+    Explain database results in clear, simple language.
+    - Answer only from the data provided. Never add outside information.
+    - If results are empty, say no matching records were found.
+    - Keep answers concise: 1 to 4 sentences.
+    - Format numbers clearly (e.g. "1,250.5 kg").
+    - Do not mention SQL, queries, rows, or technical terms.''';
   }*/
 
   String _buildSummarySystemPrompt(DatabaseSchema schema) {

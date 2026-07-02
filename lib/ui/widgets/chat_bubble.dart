@@ -15,13 +15,12 @@ class ChatBubble extends StatefulWidget {
 }
 
 class _ChatBubbleState extends State<ChatBubble> {
-  bool _showSql = false;
+  // bool _showSql = false;
 
   @override
   Widget build(BuildContext context) {
     final msg = widget.message;
     final isUser = msg.isUser;
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -63,7 +62,7 @@ class _ChatBubbleState extends State<ChatBubble> {
 
                 // ── SQL disclosure (assistant only) ──────────────────────
                 if (!isUser && msg.generatedSql != null) ...[
-                  Divider(
+                  /*Divider(
                     height: 1,
                     color: AppColors.textMuted.withOpacity(0.15),
                   ),
@@ -71,7 +70,7 @@ class _ChatBubbleState extends State<ChatBubble> {
                     sql: msg.generatedSql!,
                     isExpanded: _showSql,
                     onToggle: () => setState(() => _showSql = !_showSql),
-                  ),
+                  ),*/
                 ],
               ],
             ),
