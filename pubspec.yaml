@@ -1,5 +1,5 @@
 name: askbase
-description: Natural language query interface over any structured SQLite database using Gemini API.
+description: Natural language query interface over any structured SQLite database, powered by an on-device SLM. Fully offline — no API keys, no network calls after setup.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -15,11 +15,9 @@ dependencies:
   path: ^1.9.0
   path_provider: ^2.1.3
 
-  # Gemini API — works on all Android/iOS devices, no ABI restrictions
-  google_generative_ai: ^0.4.6
-
-  # Networking
-  dio: ^5.4.3
+  # On-device LLM inference (Qwen2.5-0.5B-Instruct via MediaPipe .task).
+  flutter_gemma:
+  flutter_gemma_mediapipe:
 
   # UI
   google_fonts: ^6.3.3
@@ -27,7 +25,6 @@ dependencies:
 
   # Utilities
   shared_preferences: ^2.2.3
-  connectivity_plus: ^6.0.3
   intl: ^0.19.0
   provider: ^6.1.2
 

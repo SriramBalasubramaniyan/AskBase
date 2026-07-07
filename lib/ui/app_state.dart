@@ -17,8 +17,15 @@ class AppState extends ChangeNotifier {
   String _statusMessage = 'Starting…';
   String? _errorMessage;
 
-  // Download progress 0–100
+  // Download progress, stored as a raw percentage (0-100) from the
+  // download callback.
   int _downloadProgress = 0;
+
+  // Approximate size of the bundled model (Qwen2.5-0.5B-Instruct, MediaPipe
+  // .task format — see llm_service.dart / README). Used only to render a
+  // human-friendly "X MB / Y MB" label; the actual download is handled
+  // entirely by flutter_gemma.
+  static const int _modelSizeMB = 547;
 
   final List<ChatMessage> _messages = [];
   bool _isProcessing = false;
@@ -30,7 +37,15 @@ class AppState extends ChangeNotifier {
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   bool get isProcessing => _isProcessing;
   DatabaseSchema get schema => _schema;
-  int get downloadProgress => _downloadProgress;
+
+  /// Fraction (0.0–1.0) — suitable for LinearProgressIndicator.value.
+  double get downloadProgress => _downloadProgress / 100;
+
+  /// Total model download size in MB.
+  int get totalMB => _modelSizeMB;
+
+  /// Approximate MB downloaded so far, derived from the progress percentage.
+  int get downloadedMB => ((_downloadProgress / 100) * _modelSizeMB).round();
 
   // ── Initialisation ────────────────────────────────────────────────────────
 

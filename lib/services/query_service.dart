@@ -25,7 +25,7 @@ class QueryResult {
 
   /// Tables that were selected by the schema selector.
   /// Populated in debug builds only.
-  final List<String>? selectedTables;
+  final List<String>? selectedTableNames;
 
   const QueryResult({
     required this.status,
@@ -33,7 +33,7 @@ class QueryResult {
     this.generatedSql,
     this.rawJson,
     this.errorDetail,
-    this.selectedTables,
+    this.selectedTableNames,
   });
 
   bool get isSuccess => status == QueryResultStatus.success;
@@ -76,7 +76,7 @@ class QueryService {
             'The AI model encountered an error while generating a query. '
             'Please try again.',
         errorDetail: e.toString(),
-        selectedTables: kDebugMode
+        selectedTableNames: kDebugMode
             ? selectedTables.map((t) => t.tableName).toList()
             : null,
       );
@@ -90,7 +90,7 @@ class QueryService {
         status: QueryResultStatus.outOfScope,
         summary: 'I can only answer questions about the data in this database. '
             'Please ask something related to the available records.',
-        selectedTables: kDebugMode
+        selectedTableNames: kDebugMode
             ? selectedTables.map((t) => t.tableName).toList()
             : null,
       );
@@ -101,7 +101,7 @@ class QueryService {
         status: QueryResultStatus.cannotAnswer,
         summary:
             'The information you asked for is not available in this database.',
-        selectedTables: kDebugMode
+        selectedTableNames: kDebugMode
             ? selectedTables.map((t) => t.tableName).toList()
             : null,
       );
@@ -116,7 +116,7 @@ class QueryService {
             'The generated query was not safe to run. Please rephrase your question.',
         generatedSql: rawSql,
         errorDetail: validationError,
-        selectedTables: kDebugMode
+        selectedTableNames: kDebugMode
             ? selectedTables.map((t) => t.tableName).toList()
             : null,
       );
@@ -134,7 +134,7 @@ class QueryService {
             'reference columns or tables that don\'t exist.',
         generatedSql: rawSql,
         errorDetail: e.toString(),
-        selectedTables: kDebugMode
+        selectedTableNames: kDebugMode
             ? selectedTables.map((t) => t.tableName).toList()
             : null,
       );
@@ -147,7 +147,7 @@ class QueryService {
         summary: 'No records were found matching your question.',
         generatedSql: rawSql,
         rawJson: '[]',
-        selectedTables: kDebugMode
+        selectedTableNames: kDebugMode
             ? selectedTables.map((t) => t.tableName).toList()
             : null,
       );
@@ -173,7 +173,7 @@ class QueryService {
         generatedSql: rawSql,
         rawJson: jsonRows,
         errorDetail: e.toString(),
-        selectedTables: kDebugMode
+        selectedTableNames: kDebugMode
             ? selectedTables.map((t) => t.tableName).toList()
             : null,
       );
@@ -184,7 +184,7 @@ class QueryService {
       summary: summary,
       generatedSql: rawSql,
       rawJson: jsonRows,
-      selectedTables: kDebugMode
+      selectedTableNames: kDebugMode
           ? selectedTables.map((t) => t.tableName).toList()
           : null,
     );

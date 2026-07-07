@@ -56,8 +56,8 @@ class DownloadScreen extends StatelessWidget {
               // ── Model info card ──────────────────────────────────────────
               const _InfoCard(
                 rows: [
-                  ('Model', 'Qwen2.5-Coder 1.5B (Q4_K_M)'),
-                  ('Download size', '~986 MB'),
+                  ('Model', 'Qwen2.5-0.5B-Instruct (MediaPipe .task)'),
+                  ('Download size', '~547 MB'),
                   ('Stored in', 'App private storage'),
                   ('Internet after setup', 'Not required'),
                 ],
