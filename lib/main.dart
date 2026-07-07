@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_gemma/core/api/flutter_gemma.dart';
+import 'package:flutter_gemma_mediapipe/flutter_gemma_mediapipe.dart';
 import 'package:provider/provider.dart';
 
 // Schema — swap this import to change the active database domain
@@ -15,6 +16,7 @@ import 'ui/widgets/error_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await FlutterGemma.initialize(inferenceEngines: [const MediaPipeEngine()]);
 
   // Lock to portrait — designed for field use on phones
   await SystemChrome.setPreferredOrientations([
@@ -30,7 +32,7 @@ void main() async {
       systemNavigationBarIconBrightness: Brightness.light,
     ),
   );
-  await FlutterGemma.initialize();
+
   runApp(
     ChangeNotifierProvider(
       // ── To swap schema: replace agriSchema with your new schema object ──
