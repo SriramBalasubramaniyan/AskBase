@@ -123,6 +123,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              Text(
+                '${state.schema.tables.length} tables · on-device',
+                style: AppTextStyles.caption,
+              ),
             ],
           ),
         ],

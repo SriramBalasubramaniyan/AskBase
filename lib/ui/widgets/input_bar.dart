@@ -45,7 +45,7 @@ class InputBar extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: isProcessing
                     ? 'Thinking…'
-                    : '',
+                    : 'Ask about farmers, crops, harvests…',
                 filled: true,
                 fillColor: AppColors.surfaceElevated,
                 border: OutlineInputBorder(

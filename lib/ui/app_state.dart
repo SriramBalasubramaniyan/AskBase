@@ -143,6 +143,7 @@ class AppState extends ChangeNotifier {
         state: MessageState.done,
         generatedSql: result.generatedSql,
         rawData: result.rawJson,
+        selectedTableNames: result.selectedTableNames,
       );
     } catch (e) {
       _updateAssistantMessage(
@@ -162,6 +163,7 @@ class AppState extends ChangeNotifier {
     required MessageState state,
     String? generatedSql,
     String? rawData,
+    List<String>? selectedTableNames,
   }) {
     final idx = _messages.indexWhere((m) => m.id == id);
     if (idx == -1) return;
@@ -170,6 +172,7 @@ class AppState extends ChangeNotifier {
       state: state,
       generatedSql: generatedSql,
       rawData: rawData,
+      selectedTableNames: selectedTableNames,
     );
     notifyListeners();
   }

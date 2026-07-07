@@ -121,11 +121,7 @@ askbase/
 │   │   └── chat_message.dart          ← ChatMessage (includes selectedTableNames)
 │   │
 │   ├── schema/
-│   │   └── agri_schema.dart           ← ★ SWAP THIS FILE to change domain ★
-│   │
-│   ├── services/
-│   │   ├── db_service.dart            ← DB copy from assets, query execution
-│   │   ├── schema_selector.dart       ← Semantic table selection
+│   │   └── agri_schema.dart            ← Semantic table selection
 │   │   ├── llm_service.dart           ← model download, load, SQL gen, summarize
 │   │   └── query_service.dart         ← pipeline orchestrator
 │   │

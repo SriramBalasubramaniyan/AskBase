@@ -24,6 +24,9 @@ android {
         targetSdk flutter.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
     }
 
     buildTypes {
@@ -35,4 +38,26 @@ android {
 
 flutter {
     source "../.."
+}
+
+tasks.register("copyNobodywhoSo") {
+    doLast {
+        def soDir = file("${rootProject.projectDir}/../build/nobodywho/jniLibs")
+        def destDir = file("${projectDir}/src/main/jniLibs")
+        if (soDir.exists()) {
+            copy {
+                from soDir
+                into destDir
+            }
+            println "Copied nobodywho .so files to jniLibs"
+        } else {
+            println "WARNING: nobodywho jniLibs dir not found at: ${soDir}"
+        }
+    }
+}
+
+tasks.whenTaskAdded { task ->
+    if (task.name == "mergeDebugJniLibFolders" || task.name == "mergeReleaseJniLibFolders") {
+        task.dependsOn("copyNobodywhoSo")
+    }
 }
