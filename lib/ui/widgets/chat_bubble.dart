@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -15,7 +16,7 @@ class ChatBubble extends StatefulWidget {
 }
 
 class _ChatBubbleState extends State<ChatBubble> {
-  // bool _showSql = false;
+  bool _showSql = false;
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +28,6 @@ class _ChatBubbleState extends State<ChatBubble> {
         crossAxisAlignment:
             isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          // ── Bubble ─────────────────────────────────────────────────────
           Container(
             constraints: BoxConstraints(
               maxWidth: MediaQuery.of(context).size.width * 0.88,
@@ -49,7 +49,6 @@ class _ChatBubbleState extends State<ChatBubble> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Message content
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                   child: isUser
@@ -62,7 +61,7 @@ class _ChatBubbleState extends State<ChatBubble> {
 
                 // ── SQL disclosure (assistant only) ──────────────────────
                 if (!isUser && msg.generatedSql != null) ...[
-                  /*Divider(
+                  Divider(
                     height: 1,
                     color: AppColors.textMuted.withOpacity(0.15),
                   ),
@@ -70,13 +69,14 @@ class _ChatBubbleState extends State<ChatBubble> {
                     sql: msg.generatedSql!,
                     isExpanded: _showSql,
                     onToggle: () => setState(() => _showSql = !_showSql),
-                  ),*/
+                    // selectedTableNames only populated in debug builds
+                    selectedTableNames: msg.selectedTableNames,
+                  ),
                 ],
               ],
             ),
           ),
 
-          // ── Timestamp ──────────────────────────────────────────────────
           Padding(
             padding: EdgeInsets.only(
               top: 4,
@@ -94,8 +94,6 @@ class _ChatBubbleState extends State<ChatBubble> {
   }
 }
 
-// ── Assistant content with streaming cursor ───────────────────────────────────
-
 class _AssistantContent extends StatelessWidget {
   final String content;
   final MessageState state;
@@ -105,18 +103,14 @@ class _AssistantContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (content.isEmpty) return const SizedBox.shrink();
-
     final isStreaming = state == MessageState.streaming;
-
     return MarkdownBody(
       data: content + (isStreaming ? ' ▍' : ''),
       styleSheet: MarkdownStyleSheet(
         p: AppTextStyles.body,
         strong: AppTextStyles.body.copyWith(fontWeight: FontWeight.w700),
         em: AppTextStyles.body.copyWith(fontStyle: FontStyle.italic),
-        code: AppTextStyles.mono.copyWith(
-          backgroundColor: AppColors.sqlChip,
-        ),
+        code: AppTextStyles.mono.copyWith(backgroundColor: AppColors.sqlChip),
         codeblockDecoration: BoxDecoration(
           color: AppColors.sqlChip,
           borderRadius: BorderRadius.circular(8),
@@ -127,17 +121,17 @@ class _AssistantContent extends StatelessWidget {
   }
 }
 
-// ── SQL disclosure panel ──────────────────────────────────────────────────────
-
 class _SqlDisclosure extends StatelessWidget {
   final String sql;
   final bool isExpanded;
   final VoidCallback onToggle;
+  final List<String>? selectedTableNames;
 
   const _SqlDisclosure({
     required this.sql,
     required this.isExpanded,
     required this.onToggle,
+    this.selectedTableNames,
   });
 
   @override
@@ -145,28 +139,17 @@ class _SqlDisclosure extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Toggle row
         InkWell(
           onTap: onToggle,
-          borderRadius: const BorderRadius.vertical(
-            bottom: Radius.circular(16),
-          ),
+          borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: Row(
               children: [
-                const Icon(
-                  Icons.code_rounded,
-                  size: 14,
-                  color: AppColors.sqlText,
-                ),
+                const Icon(Icons.code_rounded, size: 14, color: AppColors.sqlText),
                 const SizedBox(width: 6),
-                Text(
-                  'View SQL',
-                  style: AppTextStyles.caption.copyWith(
-                    color: AppColors.sqlText,
-                  ),
-                ),
+                Text('View SQL',
+                    style: AppTextStyles.caption.copyWith(color: AppColors.sqlText)),
                 const Spacer(),
                 Icon(
                   isExpanded
@@ -180,18 +163,15 @@ class _SqlDisclosure extends StatelessWidget {
           ),
         ),
 
-        // SQL content
-        if (isExpanded)
+        if (isExpanded) ...[
           Container(
             width: double.infinity,
-            margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+            margin: const EdgeInsets.fromLTRB(10, 0, 10, 6),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: AppColors.sqlChip,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: AppColors.sqlText.withOpacity(0.15),
-              ),
+              border: Border.all(color: AppColors.sqlText.withOpacity(0.15)),
             ),
             child: Stack(
               children: [
@@ -204,25 +184,51 @@ class _SqlDisclosure extends StatelessWidget {
                       Clipboard.setData(ClipboardData(text: sql));
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text(
-                            'SQL copied',
-                            style: AppTextStyles.bodySecondary,
-                          ),
+                          content: Text('SQL copied',
+                              style: AppTextStyles.bodySecondary),
                           backgroundColor: AppColors.surfaceCard,
                           duration: const Duration(seconds: 2),
                         ),
                       );
                     },
-                    child: const Icon(
-                      Icons.copy_rounded,
-                      size: 14,
-                      color: AppColors.textMuted,
-                    ),
+                    child: const Icon(Icons.copy_rounded,
+                        size: 14, color: AppColors.textMuted),
                   ),
                 ),
               ],
             ),
           ),
+
+          // ── Debug-only: selected tables panel ──────────────────────────
+          if (kDebugMode && selectedTableNames != null &&
+              selectedTableNames!.isNotEmpty)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: AppColors.accentSurface,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppColors.accentDim.withOpacity(0.4)),
+              ),
+              child: RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: 'Tables used: ',
+                      style: AppTextStyles.caption
+                          .copyWith(color: AppColors.textMuted),
+                    ),
+                    TextSpan(
+                      text: selectedTableNames!.join(', '),
+                      style: AppTextStyles.caption
+                          .copyWith(color: AppColors.accent),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ],
     );
   }
