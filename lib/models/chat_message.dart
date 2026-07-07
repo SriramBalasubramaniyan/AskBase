@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 
 enum MessageRole { user, assistant }
-
 enum MessageState { idle, thinking, streaming, done, error }
 
 @immutable
@@ -11,12 +10,12 @@ class ChatMessage {
   final String content;
   final MessageState state;
   final DateTime timestamp;
-
-  /// The raw SQL generated for this response (shown in debug / expandable).
   final String? generatedSql;
-
-  /// The raw rows returned from the DB before summarization.
   final String? rawData;
+
+  /// Debug-only: tables selected by SchemaSelector for this response.
+  /// Null in release builds.
+  final List<String>? selectedTableNames;
 
   const ChatMessage({
     required this.id,
@@ -26,6 +25,7 @@ class ChatMessage {
     required this.timestamp,
     this.generatedSql,
     this.rawData,
+    this.selectedTableNames,
   });
 
   ChatMessage copyWith({
@@ -33,6 +33,7 @@ class ChatMessage {
     MessageState? state,
     String? generatedSql,
     String? rawData,
+    List<String>? selectedTableNames,
   }) {
     return ChatMessage(
       id: id,
@@ -42,6 +43,7 @@ class ChatMessage {
       timestamp: timestamp,
       generatedSql: generatedSql ?? this.generatedSql,
       rawData: rawData ?? this.rawData,
+      selectedTableNames: selectedTableNames ?? this.selectedTableNames,
     );
   }
 
