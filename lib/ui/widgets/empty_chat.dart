@@ -14,11 +14,11 @@ class EmptyChat extends StatelessWidget {
   // When swapping schema, update these to match the new domain.
   static const _suggestions = [
     'How many farmers are registered?',
-    'Which crop was sown the most?',
-    'List all harvests in 2024',
     'Which farmer harvested the most kg?',
-    'What varieties of Paddy are recorded?',
-    'Show total quantity sown per crop',
+    'List all active loans',
+    'Which crops have insurance claims filed?',
+    'Show sales with pending payments',
+    'Which farmers attended training programmes?',
   ];
 
   @override
@@ -81,6 +81,53 @@ class EmptyChat extends StatelessWidget {
             children: _suggestions
                 .map((s) => _SuggestionChip(text: s))
                 .toList(),
+          ),
+
+          const SizedBox(height: 36),
+
+          // ── Schema summary ────────────────────────────────────────────
+          Text('AVAILABLE TABLES', style: AppTextStyles.label),
+          const SizedBox(height: 10),
+
+          ...schema.tables.map(
+            (t) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 5),
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: AppColors.accent,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: RichText(
+                      text: TextSpan(
+                        children: [
+                          TextSpan(
+                            text: '${t.tableName}  ',
+                            style: AppTextStyles.body.copyWith(
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'JetBrainsMono',
+                              fontSize: 13,
+                            ),
+                          ),
+                          TextSpan(
+                            text: '${t.tableDescription.split('.').first}.',
+                            style: AppTextStyles.bodySecondary,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
