@@ -17,14 +17,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.13.1"
-  background_downloader:
-    dependency: transitive
-    description:
-      name: background_downloader
-      sha256: aceacec2b2a72ec3a8862ab5895fcbbc71ab33765f3619d57963f3110dd268e3
-      url: "https://pub.dev"
-    source: hosted
-    version: "9.5.5"
   boolean_selector:
     dependency: transitive
     description:
@@ -142,22 +134,6 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  flutter_gemma:
-    dependency: "direct main"
-    description:
-      name: flutter_gemma
-      sha256: e4d820b861301501b9645c6b6170d1e340d00e1d86aafeccc1eb6d74578d70e9
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.0-rc.1"
-  flutter_gemma_mediapipe:
-    dependency: "direct main"
-    description:
-      name: flutter_gemma_mediapipe
-      sha256: "3fe4e32f9803856ed6faa64d25882b5115a3ad58e0285aec01401e780a078f9b"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.0-rc.1"
   flutter_lints:
     dependency: "direct dev"
     description:
@@ -200,6 +176,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.3.3"
+  google_generative_ai:
+    dependency: "direct main"
+    description:
+      name: google_generative_ai
+      sha256: "71f613d0247968992ad87a0eb21650a566869757442ba55a31a81be6746e0d1f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.4.7"
   hooks:
     dependency: transitive
     description:
@@ -248,14 +232,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.1"
-  large_file_handler:
-    dependency: transitive
-    description:
-      name: large_file_handler
-      sha256: "1657db12b4591242b186c23eee437997be91e655ab0d803fd74829074460757f"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.4.0"
   leak_tracker:
     dependency: transitive
     description:
@@ -336,14 +312,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.0"
-  mutex:
-    dependency: transitive
-    description:
-      name: mutex
-      sha256: "8827da25de792088eb33e572115a5eb0d61d61a3c01acbc8bcbe76ed78f1a1f2"
-      url: "https://pub.dev"
-    source: hosted
-    version: "3.1.0"
   native_toolchain_c:
     dependency: transitive
     description:

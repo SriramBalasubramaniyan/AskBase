@@ -22,7 +22,7 @@ dependencies:
   dio: ^5.4.3
 
   # UI
-  google_fonts: ^6.4.0
+  google_fonts: ^6.3.3
   flutter_markdown: ^0.7.3
 
   # Utilities
