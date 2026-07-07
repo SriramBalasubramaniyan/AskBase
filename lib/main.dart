@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:nobodywho/nobodywho.dart' as nw;
 
 // Schema — swap this import to change the active database domain
 import 'schema/agri_schema.dart';
@@ -15,8 +14,6 @@ import 'ui/widgets/error_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await nw.NobodyWho.init();
 
   // Lock to portrait — designed for field use on phones
   await SystemChrome.setPreferredOrientations([
