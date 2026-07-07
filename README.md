@@ -17,9 +17,10 @@ AskBase: Ravi Kumar had the highest harvest in 2024,
 
 Under the hood:
 1. The schema you define tells the model what tables and columns exist
-2. The model generates a SQLite SELECT query
-3. The query runs against the local database
-4. The model summarizes the results in plain language
+2. **SchemaSelector** picks only the relevant tables using keyword scoring
+3. The model generates a SQLite SELECT query using only those tables
+4. The query runs against the local database
+5. The model summarizes the results in plain language
 
 ---
 
@@ -29,7 +30,10 @@ Under the hood:
 User Question
      │
      ▼
-LlmService.generateSql()          ← schema injected into system prompt
+SchemaSelector.select()           ← keyword scoring against 50-table schema
+     │                               returns 5-8 relevant tables + FK deps
+     ▼
+LlmService.generateSql()          ← compact schema injected (selected tables only)
      │
      ▼
 SQL query (validated, SELECT only)
@@ -47,6 +51,20 @@ LlmService.summarizeResults()     ← streaming tokens
 Natural language answer
 ```
 
+### Semantic schema selection
+
+The full 50-table schema is too large to fit in the model's 1280-token context window. `SchemaSelector` solves this by scoring each table against the user's question using:
+
+- **Table name match** (weight: 10) — exact word match in table name
+- **Table description match** (weight: 3) — keyword found in description
+- **Field name match** (weight: 5) — keyword matches a column name
+- **Field description match** (weight: 2) — keyword found in field description
+- **FK dependency inclusion** — any table referenced by a FK in a selected table is automatically included so JOINs remain valid
+
+Top 5 scoring tables are selected, plus their FK dependencies. This keeps prompt tokens under ~400, leaving ~880 tokens for SQL output — well within the 1280-token limit regardless of total schema size.
+
+In **debug builds**, the SQL disclosure panel shows which tables were selected for each query.
+
 ### On-device model
 
 | Item | Value |
@@ -61,19 +79,30 @@ Natural language answer
 | Download source | HuggingFace (litert-community) |
 | Internet after setup | Not required |
 
+**Why flutter_gemma + MediaPipe `.task`?**
+
+Every other Flutter on-device LLM package (nobodywho, llama_cpp_dart, fllama) only ships `arm64-v8a` and `x86_64` native binaries. Many budget Android devices — particularly Samsung M-series and other low-cost field devices — run a 32-bit `armeabi-v7a` Android image. Google's MediaPipe `tasks-genai` is the only runtime that explicitly ships all three ABI variants, making it the correct choice for maximum device compatibility.
+
 ### Database
 
-The bundled `agri.db` tracks an agricultural domain:
+The bundled `agri.db` is a comprehensive agricultural management database with **50 tables** and **1047 records** covering the full farming lifecycle:
 
-| Table | Description |
+| Domain | Tables |
 |---|---|
-| `farmer` | Registered farmers |
-| `farm` | Farms owned by farmers |
-| `crop` | Crop types (Paddy, Wheat, Maize…) |
-| `variety` | Crop varieties (IR64, HD2967…) |
-| `grade` | Quality grades per variety |
-| `sowing` | Sowing events (who, where, what, when, how much) |
-| `harvest` | Harvest events (who, where, what, when, how much) |
+| Geography | `state`, `district`, `village` |
+| Land & Soil | `soil_type`, `land_document`, `soil_test` |
+| Farmer & Farm | `farmer`, `farm` |
+| Crops | `crop`, `variety`, `grade`, `season` |
+| Production | `sowing`, `harvest` |
+| Inputs | `fertilizer`, `fertilizer_application`, `pesticide`, `pesticide_application`, `input_supplier`, `input_purchase` |
+| Water & Weather | `irrigation`, `weather_log` |
+| Machinery & Labour | `equipment`, `equipment_usage`, `labour`, `labour_attendance` |
+| Storage & Trade | `warehouse`, `stock`, `buyer`, `sale`, `market_price`, `delivery`, `transport` |
+| Finance | `bank_account`, `loan`, `insurance`, `payment`, `subsidy` |
+| Government | `government_scheme`, `scheme_enrollment` |
+| Pest & Disease | `crop_disease`, `disease_report` |
+| Advisory & Compliance | `advisory`, `inspection`, `certification` |
+| Community | `cooperative`, `cooperative_member`, `training`, `training_attendance`, `feedback` |
 
 ---
 
@@ -89,13 +118,14 @@ askbase/
 │   │
 │   ├── models/
 │   │   ├── db_schema_model.dart       ← FieldDef, TableSchema, DatabaseSchema
-│   │   └── chat_message.dart          ← ChatMessage, MessageRole, MessageState
+│   │   └── chat_message.dart          ← ChatMessage (includes selectedTableNames)
 │   │
 │   ├── schema/
 │   │   └── agri_schema.dart           ← ★ SWAP THIS FILE to change domain ★
 │   │
 │   ├── services/
 │   │   ├── db_service.dart            ← DB copy from assets, query execution
+│   │   ├── schema_selector.dart       ← Semantic table selection
 │   │   ├── llm_service.dart           ← model download, load, SQL gen, summarize
 │   │   └── query_service.dart         ← pipeline orchestrator
 │   │
@@ -107,9 +137,9 @@ askbase/
 │       │   ├── download_screen.dart
 │       │   └── chat_screen.dart
 │       └── widgets/
-│           ├── chat_bubble.dart       ← message bubble + SQL disclosure
-│           ├── input_bar.dart         ← text input + send button
-│           ├── empty_chat.dart        ← suggestions + schema summary
+│           ├── chat_bubble.dart       ← SQL disclosure + debug table panel
+│           ├── input_bar.dart
+│           ├── empty_chat.dart
 │           ├── thinking_indicator.dart
 │           └── error_screen.dart
 ```
@@ -132,25 +162,12 @@ cd askbase
 flutter pub get
 ```
 
-### 2. Add the database
-
-Copy your SQLite database to the assets folder:
+### 2. Build and run
 
 ```bash
-cp your_database.db assets/agri.db
-```
-
-### 3. Build and run
-
-```bash
-# Debug
-flutter run
-
-# Release APK
+flutter run          # debug — shows selected tables in SQL panel
+flutter run --release # release — selected tables hidden
 flutter build apk --release
-
-# Release AAB (for Play Store)
-flutter build appbundle --release
 ```
 
 ---
@@ -167,61 +184,18 @@ cp your_new_database.db assets/agri.db
 
 ### Step 2 — Create a new schema file
 
-Create `lib/schema/your_schema.dart`:
-
-```dart
-import '../models/db_schema_model.dart';
-
-final yourSchema = DatabaseSchema(
-  databaseName: 'YourApp',
-  dbFileName: 'your.db',
-  assetPath: 'assets/your.db',
-  databaseDescription: 'One paragraph describing what this database contains.',
-  tables: [
-    TableSchema(
-      tableName: 'your_table',
-      tableDescription: 'What this table stores.',
-      fields: [
-        FieldDef(
-          name: 'id',
-          type: FieldType.integer,
-          description: 'Unique identifier.',
-          isPrimaryKey: true,
-        ),
-        FieldDef(
-          name: 'name',
-          type: FieldType.text,
-          description: 'Name of the entity.',
-        ),
-        FieldDef(
-          name: 'parent_id',
-          type: FieldType.integer,
-          description: 'Reference to parent record.',
-          foreignKeyRef: 'parent_table.id',
-        ),
-      ],
-    ),
-  ],
-);
-```
+Create `lib/schema/your_schema.dart`. Follow the same structure as `agri_schema.dart`. The `SchemaSelector` works automatically with any schema — no changes needed there.
 
 ### Step 3 — Update main.dart (one line)
 
 ```dart
-// Before
-import 'schema/agri_schema.dart';
-create: (_) => AppState(agriSchema)..initialize(),
-
-// After
 import 'schema/your_schema.dart';
 create: (_) => AppState(yourSchema)..initialize(),
 ```
 
 ### Step 4 — Update suggestions in empty_chat.dart
 
-Edit the `_suggestions` list in `lib/ui/widgets/empty_chat.dart` to reflect questions relevant to your new domain.
-
-That's it. No other file needs to change.
+Edit the `_suggestions` list in `lib/ui/widgets/empty_chat.dart`.
 
 ---
 
@@ -233,83 +207,64 @@ That's it. No other file needs to change.
 |---|---|---|---|
 | `name` | `String` | ✅ | Exact column name in SQLite |
 | `type` | `FieldType` | ✅ | `integer`, `text`, `real`, `blob` |
-| `description` | `String` | ✅ | Injected into LLM prompt — be specific |
-| `isPrimaryKey` | `bool` | ❌ | Marks field as PK in prompt |
-| `foreignKeyRef` | `String?` | ❌ | `"table.column"` format for JOIN awareness |
+| `description` | `String` | ✅ | Used by SchemaSelector for keyword matching AND injected into LLM prompt |
+| `isPrimaryKey` | `bool` | ❌ | Marks field as PK |
+| `foreignKeyRef` | `String?` | ❌ | `"table.column"` — used for JOIN awareness and FK dependency resolution |
 
-### Writing good field descriptions
+### Writing good descriptions
 
-The description is what the model reads to understand what each column means. Be specific:
+Descriptions serve two purposes: they help `SchemaSelector` find the right tables, and they help the model understand column semantics.
 
 ```dart
-// ❌ Too vague
+// ❌ Vague — selector won't find it, model won't understand it
 FieldDef(name: 'qty', type: FieldType.real, description: 'Quantity')
 
-// ✅ Specific
+// ✅ Specific — selector finds "loan" queries, model writes correct SQL
 FieldDef(
-  name: 'quantity_kg',
+  name: 'sanctioned_amount',
   type: FieldType.real,
-  description: 'Quantity of seed sown in kilograms.',
+  description: 'Amount sanctioned for the loan in rupees.',
 )
 ```
 
-For date fields, always mention the format:
+### Token budget
 
-```dart
-FieldDef(
-  name: 'sow_date',
-  type: FieldType.text,
-  description: 'Date when sowing occurred, stored as ISO-8601 text (YYYY-MM-DD).',
-)
-```
-
-### Token budget awareness
-
-The model has a hard limit of **1280 tokens** (input + output combined). The system prompt + schema + user question must leave enough room for the SQL output. Keep field descriptions concise — the compact prompt format in `llm_service.dart` is already optimised for this limit. If you add many tables, monitor token usage — overly verbose descriptions will cause the model to crash with an `OUT_OF_RANGE` error.
+The model has a hard limit of **1280 tokens**. SchemaSelector ensures only 5-8 tables are sent per query (~300-400 tokens), leaving ~880 tokens for SQL output. You can safely have 100+ tables in the schema — only the relevant subset is ever sent to the model.
 
 ---
 
 ## Security
 
-- Only `SELECT` statements are allowed. Any query containing `DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `CREATE`, `REPLACE`, `TRUNCATE`, `ATTACH`, `DETACH`, or `PRAGMA` is rejected before execution.
-- The database is opened without write permissions enforced at the application layer via `validateSql()`.
-- The model file is stored in the app's private documents directory (not accessible to other apps).
-- No data is sent to any server. The model runs 100% on-device.
+- Only `SELECT` statements are allowed. `DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `CREATE`, `REPLACE`, `TRUNCATE`, `ATTACH`, `DETACH`, `PRAGMA` are all rejected.
+- The database is opened and protected at the query validation layer via `validateSql()`.
+- The model file is stored in the app's private documents directory.
+- No data is sent to any server. Fully offline after setup.
 
 ---
 
 ## Troubleshooting
 
-### Model download fails
-- Check device has internet access and WiFi is connected
-- The download is ~547 MB — use WiFi to avoid mobile data charges
-- Retry if HuggingFace CDN times out
+### Wrong tables selected for a query
+- The SchemaSelector uses keyword matching. If results are wrong, improve field/table descriptions in the schema file.
+- In debug mode, expand the SQL panel to see which tables were selected.
 
-### App crashes during inference with OUT_OF_RANGE error
-- The system prompt + schema exceeded the model's 1280 token limit
-- Shorten field descriptions in your schema file
-- The compact prompt format in `_buildSqlSystemPrompt` is already optimised — avoid reverting to verbose prompts
+### App crashes with OUT_OF_RANGE error
+- Selected tables + question exceeded 1280 tokens.
+- Shorten field descriptions or reduce FK chains. The compact prompt format is already optimised.
 
 ### SQL shown as `TextResponse("SELECT ...")` instead of plain SQL
-- This means `generateChatResponse()` returned a `TextResponse` object rather than a plain string
-- Fix: unwrap with `response is TextResponse ? response.token : response?.toString() ?? ''` in `llm_service.dart`
+- Unwrap with `response is TextResponse ? response.token : response.toString()` in `llm_service.dart`.
 
 ### "The generated query was not safe to run"
-- Usually caused by the `TextResponse` wrapping issue above — the validator sees `TextResponse(...)` which doesn't start with `select`
-- Also check if the model output any preamble before the SQL — the `_extractSql` method strips markdown fences but not prose preamble
+- Usually the `TextResponse` wrapping issue above.
+- Check if model output prose before the SQL — `_extractSql` strips markdown fences but not preamble.
 
 ### App crashes during inference (out of memory)
-- Ensure device has at least 1.5 GB free RAM
-- Close background apps and retry
-- The MediaPipe engine runs CPU-only on armeabi-v7a devices
-
-### Model gives wrong SQL
-- Improve field descriptions in the schema file — more specific = better SQL
-- Add `foreignKeyRef` to all foreign key fields so the model knows how to JOIN
-- Rephrase the question more specifically for complex multi-table queries
+- At least 1.5 GB free RAM required. Close background apps.
+- MediaPipe runs CPU-only on armeabi-v7a devices.
 
 ### "No records found" for valid questions
-- Ask "what farmers are there?" first to confirm exact names before filtering by name
+- Confirm exact names first: "what farmers are there?" before filtering by name.
 
 ---
 
@@ -323,10 +278,10 @@ The model has a hard limit of **1280 tokens** (input + output combined). The sys
 | `dio` | ^5.4.3 | Model download with progress |
 | `path_provider` | ^2.1.3 | App documents directory |
 | `provider` | ^6.1.2 | State management |
-| `google_fonts` | 6.3.2 | DM Sans typeface — pinned exactly; 6.3.0/6.3.1 broken on Dart 3.8 |
-| `flutter_markdown` | ^0.7.3 | Markdown rendering in bubbles |
+| `google_fonts` | 6.3.2 | DM Sans — pinned; 6.3.0/6.3.1 broken on Dart 3.8 |
+| `flutter_markdown` | ^0.7.3 | Markdown rendering |
 | `connectivity_plus` | ^6.0.3 | WiFi check before download |
-| `shared_preferences` | ^2.2.3 | Model-ready flag persistence |
+| `shared_preferences` | ^2.2.3 | Model-ready flag |
 | `intl` | ^0.19.0 | Timestamp formatting |
 
 ---
@@ -335,8 +290,7 @@ The model has a hard limit of **1280 tokens** (input + output combined). The sys
 
 **Required: Flutter 3.41.1 (stable), Dart 3.8.x**
 
-Key version constraints:
-- `google_fonts` pinned to `6.3.2` — versions 6.3.0 and 6.3.1 have a broken `FontWeight` const map on Dart 3.8; 6.3.2 fixes it
+- `google_fonts` pinned to `6.3.2` — 6.3.0/6.3.1 broken on Dart 3.8
 - `flutter_gemma ^0.15.0` requires Dart 3.8+
 - Android `minSdk 24` required by flutter_gemma MediaPipe engine
 
