@@ -122,11 +122,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 style: AppTextStyles.body.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
-              ),
-              Text(
-                '${state.schema.tables.length} tables · on-device',
-                style: AppTextStyles.caption,
-              ),
+              )
             ],
           ),
         ],
