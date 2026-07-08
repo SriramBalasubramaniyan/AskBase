@@ -57,7 +57,8 @@ class DbService {
     _assertReady();
     try {
       final cleaned = _sanitize(sql);
-      return await _db!.rawQuery(cleaned);
+      final caseInsensitive = _makeTextComparisonsCaseInsensitive(cleaned);
+      return await _db!.rawQuery(caseInsensitive);
     } on DatabaseException catch (e) {
       throw DbQueryException(e.toString(), sql);
     }
@@ -106,6 +107,40 @@ class DbService {
         .replaceAll('```sql', '')
         .replaceAll('```', '')
         .trim();
+  }
+
+  /// Rewrites `column = 'literal'`, `column != 'literal'` and
+  /// `column <> 'literal'` comparisons to add `COLLATE NOCASE`.
+  ///
+  /// Why: the SLM generates plausible-looking values for status/enum-style
+  /// text columns (e.g. `status = 'active'`) but has no way to know the
+  /// exact casing actually stored in the database (e.g. `'Active'`).
+  /// SQLite string comparison is case-sensitive by default, so a
+  /// perfectly valid, semantically-correct query silently returns zero
+  /// rows on a casing mismatch. Rather than relying on the model to guess
+  /// casing correctly (prompt-engineering-only fixes are unreliable for a
+  /// 0.5B model), this deterministically neutralizes the casing sensitivity
+  /// at the SQL layer for every generated query.
+  ///
+  /// Only touches comparisons against single-quoted string literals —
+  /// numeric/boolean comparisons and columns compared to other columns are
+  /// left untouched. Comparisons that already specify a COLLATE clause are
+  /// skipped so this is idempotent and won't double up.
+  ///
+  /// Known limitation: does not currently rewrite `IN ('a', 'b')` lists or
+  /// `LIKE` patterns — SQLite's `LIKE` is already case-insensitive for
+  /// ASCII by default, and `IN` lists were not part of the observed bug.
+  String _makeTextComparisonsCaseInsensitive(String sql) {
+    // Matches: <column> (= | != | <>) '<sqlite-escaped string literal>'
+    // A SQLite string literal escapes an embedded quote by doubling it
+    // (e.g. 'John''s Farm'), which is what (?:[^']|'')* captures.
+    final pattern = RegExp(
+      r"([A-Za-z_][\w.]*)\s*(=|!=|<>)\s*('(?:[^']|'')*')(?!\s*COLLATE)",
+      caseSensitive: false,
+    );
+    return sql.replaceAllMapped(pattern, (m) {
+      return '${m.group(1)} ${m.group(2)} ${m.group(3)} COLLATE NOCASE';
+    });
   }
 
   Future<void> close() async {
