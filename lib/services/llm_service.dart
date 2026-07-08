@@ -98,21 +98,25 @@ class LlmService {
     await chat.addQueryChunk(Message.text(text: prompt, isUser: true));
 
     final buffer = StringBuffer();
-    String lastCumulative = '';
 
+    // IMPORTANT: per flutter_gemma's documented streaming contract,
+    // TextResponse.token from generateChatResponseAsync() is already the
+    // *incremental* chunk for that event — every official example appends
+    // it directly (e.g. `_currentOutput += response.token`). The previous
+    // version of this method incorrectly treated `.token` as the growing
+    // cumulative string and re-sliced a "delta" out of it on every event,
+    // which corrupted the output into scrambled text (e.g. "Thereerered",
+    // "Noatching") regardless of how good the underlying model actually is.
+    // Fix: just append each token as it arrives.
     await for (final response in chat.generateChatResponseAsync()) {
-      final fullText =
-          response is TextResponse ? response.token : response.toString();
-      if (fullText.length > lastCumulative.length) {
-        final delta = fullText.substring(lastCumulative.length);
-        buffer.write(delta);
-        onToken(delta);
-        lastCumulative = fullText;
-      } else if (lastCumulative.isEmpty && fullText.isNotEmpty) {
-        buffer.write(fullText);
-        onToken(fullText);
-        lastCumulative = fullText;
+      if (response is TextResponse) {
+        final token = response.token;
+        if (token.isEmpty) continue;
+        buffer.write(token);
+        onToken(token);
       }
+      // Other response types (FunctionCallResponse, ThinkingResponse) are
+      // not used for this plain-text summarization prompt and are ignored.
     }
 
     return buffer.toString().trim();
