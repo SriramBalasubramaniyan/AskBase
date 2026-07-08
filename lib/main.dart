@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_gemma/core/api/flutter_gemma.dart';
+import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_gemma_mediapipe/flutter_gemma_mediapipe.dart';
 import 'package:provider/provider.dart';
 
