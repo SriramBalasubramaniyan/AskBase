@@ -47,6 +47,14 @@ class QueryService {
   final _llm = LlmService.instance;
   final _selector = SchemaSelector.instance;
 
+  /// Total SQL-generation attempts per question: 1 initial try + this many
+  /// self-correction retries. Kept small on purpose — each attempt is a
+  /// full on-device generation call, not free on a 0.5B model on a phone,
+  /// and a question that's genuinely unanswerable from the schema won't be
+  /// fixed by trying harder.
+  static const int _maxRetries = 2;
+  static const int _maxAttempts = _maxRetries + 1;
+
   Future<QueryResult> ask({
     required String question,
     required DatabaseSchema schema,
@@ -61,82 +69,111 @@ class QueryService {
       developer.log(debugInfo, name: 'SchemaSelector');
     }
 
-    // ── Step 2: Generate SQL using only selected tables ─────────────────────
-    String rawSql;
-    try {
-      rawSql = await _llm.generateSql(
-        userQuestion: question,
-        selectedTables: selectedTables,
-        schemaName: schema.databaseName,
-      );
-    } catch (e) {
-      return QueryResult(
-        status: QueryResultStatus.llmError,
-        summary:
-            'The AI model encountered an error while generating a query. '
-            'Please try again.',
-        errorDetail: e.toString(),
-        selectedTableNames: kDebugMode
-            ? selectedTables.map((t) => t.tableName).toList()
-            : null,
-      );
+    final debugTables =
+        kDebugMode ? selectedTables.map((t) => t.tableName).toList() : null;
+
+    // ── Steps 2-5: generate → validate → execute, with self-correction ──────
+    // On failure at any stage, the specific error is fed back into the next
+    // generation attempt so the model can actually fix its mistake (wrong/
+    // non-existent column, unsafe keyword, etc.) instead of just re-rolling
+    // blind. Loops at most _maxAttempts times total.
+    String? rawSql;
+    String? lastError;
+    List<Map<String, dynamic>>? rows;
+
+    for (int attempt = 1; attempt <= _maxAttempts; attempt++) {
+      final isRetry = attempt > 1;
+
+      String candidateSql;
+      try {
+        candidateSql = await _llm.generateSql(
+          userQuestion: question,
+          selectedTables: selectedTables,
+          schemaName: schema.databaseName,
+          previousAttemptSql: isRetry ? rawSql : null,
+          previousError: isRetry ? lastError : null,
+        );
+      } catch (e) {
+        lastError = e.toString();
+        if (kDebugMode) {
+          developer.log('Attempt $attempt: generation threw — $lastError',
+              name: 'QueryService');
+        }
+        if (attempt == _maxAttempts) {
+          return QueryResult(
+            status: QueryResultStatus.llmError,
+            summary:
+                'The AI model encountered an error while generating a '
+                'query. Please try again.',
+            errorDetail: lastError,
+            selectedTableNames: debugTables,
+          );
+        }
+        continue;
+      }
+
+      rawSql = candidateSql;
+      final sqlUpper = rawSql.trim().toUpperCase();
+
+      // These are the model correctly declining, not a bug to retry against.
+      if (sqlUpper.contains('OUT_OF_SCOPE')) {
+        return QueryResult(
+          status: QueryResultStatus.outOfScope,
+          summary:
+              'I can only answer questions about the data in this database. '
+              'Please ask something related to the available records.',
+          selectedTableNames: debugTables,
+        );
+      }
+
+      if (sqlUpper.contains('CANNOT_ANSWER')) {
+        return QueryResult(
+          status: QueryResultStatus.cannotAnswer,
+          summary:
+              'The information you asked for is not available in this database.',
+          selectedTableNames: debugTables,
+        );
+      }
+
+      final validationError = _db.validateSql(rawSql);
+      if (validationError != null) {
+        lastError = validationError;
+        if (kDebugMode) {
+          developer.log('Attempt $attempt: validation failed — $lastError',
+              name: 'QueryService');
+        }
+        if (attempt == _maxAttempts) break;
+        continue;
+      }
+
+      try {
+        rows = await _db.runSelect(rawSql);
+        lastError = null;
+        if (kDebugMode) {
+          developer.log('Attempt $attempt: succeeded', name: 'QueryService');
+        }
+        break; // got a runnable query — stop retrying
+      } catch (e) {
+        lastError = e.toString();
+        if (kDebugMode) {
+          developer.log('Attempt $attempt: execution failed — $lastError',
+              name: 'QueryService');
+        }
+        if (attempt == _maxAttempts) break;
+        continue;
+      }
     }
 
-    // ── Step 3: Check special LLM responses ─────────────────────────────────
-    final sqlUpper = rawSql.trim().toUpperCase();
-
-    if (sqlUpper.contains('OUT_OF_SCOPE')) {
-      return QueryResult(
-        status: QueryResultStatus.outOfScope,
-        summary: 'I can only answer questions about the data in this database. '
-            'Please ask something related to the available records.',
-        selectedTableNames: kDebugMode
-            ? selectedTables.map((t) => t.tableName).toList()
-            : null,
-      );
-    }
-
-    if (sqlUpper.contains('CANNOT_ANSWER')) {
-      return QueryResult(
-        status: QueryResultStatus.cannotAnswer,
-        summary:
-            'The information you asked for is not available in this database.',
-        selectedTableNames: kDebugMode
-            ? selectedTables.map((t) => t.tableName).toList()
-            : null,
-      );
-    }
-
-    // ── Step 4: Validate SQL ─────────────────────────────────────────────────
-    final validationError = _db.validateSql(rawSql);
-    if (validationError != null) {
+    // Exhausted every attempt without landing a runnable query.
+    if (rows == null) {
       return QueryResult(
         status: QueryResultStatus.sqlError,
-        summary:
-            'The generated query was not safe to run. Please rephrase your question.',
+        summary: 'I couldn\'t come up with a working query for "$question" '
+            'right now. Try rephrasing your question, or ask about '
+            'something else in the data.',
         generatedSql: rawSql,
-        errorDetail: validationError,
-        selectedTableNames: kDebugMode
-            ? selectedTables.map((t) => t.tableName).toList()
-            : null,
-      );
-    }
-
-    // ── Step 5: Execute query ────────────────────────────────────────────────
-    List<Map<String, dynamic>> rows;
-    try {
-      rows = await _db.runSelect(rawSql);
-    } catch (e) {
-      return QueryResult(
-        status: QueryResultStatus.sqlError,
-        summary:
-            'There was a problem running the database query. The question may '
-            'reference columns or tables that don\'t exist.',
-        generatedSql: rawSql,
-        errorDetail: e.toString(),
-        selectedTableNames: kDebugMode
-            ? selectedTables.map((t) => t.tableName).toList()
-            : null,
+        errorDetail: lastError,
+        selectedTableNames: debugTables,
       );
     }
 
@@ -147,9 +184,7 @@ class QueryService {
         summary: 'No records were found matching your question.',
         generatedSql: rawSql,
         rawJson: '[]',
-        selectedTableNames: kDebugMode
-            ? selectedTables.map((t) => t.tableName).toList()
-            : null,
+        selectedTableNames: debugTables,
       );
     }
 
@@ -161,7 +196,7 @@ class QueryService {
     try {
       summary = await _llm.summarizeResults(
         userQuestion: question,
-        sqlQuery: rawSql,
+        sqlQuery: rawSql!,
         jsonRows: jsonRows,
         schemaName: schema.databaseName,
         onToken: onToken,
@@ -173,9 +208,7 @@ class QueryService {
         generatedSql: rawSql,
         rawJson: jsonRows,
         errorDetail: e.toString(),
-        selectedTableNames: kDebugMode
-            ? selectedTables.map((t) => t.tableName).toList()
-            : null,
+        selectedTableNames: debugTables,
       );
     }
 
@@ -184,9 +217,7 @@ class QueryService {
       summary: summary,
       generatedSql: rawSql,
       rawJson: jsonRows,
-      selectedTableNames: kDebugMode
-          ? selectedTables.map((t) => t.tableName).toList()
-          : null,
+      selectedTableNames: debugTables,
     );
   }
 }

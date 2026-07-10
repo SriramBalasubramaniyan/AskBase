@@ -53,10 +53,18 @@ class LlmService {
 
   /// [selectedTables] — pre-filtered by SchemaSelector, not the full schema.
   /// [schemaName] — used only in the system prompt header.
+  ///
+  /// [previousAttemptSql] / [previousError] — when set (on a retry after a
+  /// failed attempt), the prompt switches from "write a query" to "fix this
+  /// specific query, here's exactly why it failed". This is what lets the
+  /// self-correction loop in QueryService actually improve on retry instead
+  /// of just re-rolling the same mistake.
   Future<String> generateSql({
     required String userQuestion,
     required List<TableSchema> selectedTables,
     required String schemaName,
+    String? previousAttemptSql,
+    String? previousError,
   }) async {
     _assertLoaded();
 
@@ -64,10 +72,22 @@ class LlmService {
       systemInstruction: _buildSqlSystemPrompt(selectedTables, schemaName),
     );
 
-    await chat.addQueryChunk(Message.text(
-      text: 'Question: $userQuestion\n\nSQL:',
-      isUser: true,
-    ));
+    final isRetry = previousAttemptSql != null &&
+        previousAttemptSql.isNotEmpty &&
+        previousError != null &&
+        previousError.isNotEmpty;
+
+    final userText = isRetry
+        ? 'Question: $userQuestion\n\n'
+            'Your previous SQL failed to run:\n$previousAttemptSql\n\n'
+            'Error: $previousError\n\n'
+            'Fix the query. Use ONLY the exact table and column names listed '
+            'in SCHEMA above — do not invent or guess a name that isn\'t '
+            'there. If no valid query is possible, output CANNOT_ANSWER.\n\n'
+            'SQL:'
+        : 'Question: $userQuestion\n\nSQL:';
+
+    await chat.addQueryChunk(Message.text(text: userText, isUser: true));
 
     final response = await chat.generateChatResponse();
     final sqlText =
@@ -99,15 +119,9 @@ class LlmService {
 
     final buffer = StringBuffer();
 
-    // IMPORTANT: per flutter_gemma's documented streaming contract,
-    // TextResponse.token from generateChatResponseAsync() is already the
-    // *incremental* chunk for that event — every official example appends
-    // it directly (e.g. `_currentOutput += response.token`). The previous
-    // version of this method incorrectly treated `.token` as the growing
-    // cumulative string and re-sliced a "delta" out of it on every event,
-    // which corrupted the output into scrambled text (e.g. "Thereerered",
-    // "Noatching") regardless of how good the underlying model actually is.
-    // Fix: just append each token as it arrives.
+    // Per flutter_gemma's documented streaming contract, TextResponse.token
+    // from generateChatResponseAsync() is already the incremental chunk for
+    // that event — append it directly, don't re-slice a delta out of it.
     await for (final response in chat.generateChatResponseAsync()) {
       if (response is TextResponse) {
         final token = response.token;
@@ -136,7 +150,10 @@ class LlmService {
 
     return 'SQLite expert for $schemaName. Output ONLY a valid SELECT query '
         'or CANNOT_ANSWER or OUT_OF_SCOPE.\n'
-        'Rules: SELECT only. Use aliases in JOINs. '
+        'Rules: SELECT only. Use ONLY the exact table and column names '
+        'listed below — never invent, guess, or assume a column exists just '
+        'because it seems plausible. If a needed column truly isn\'t listed, '
+        'output CANNOT_ANSWER instead of guessing. Use aliases in JOINs. '
         'LIMIT 100 if unspecified. Dates are TEXT YYYY-MM-DD.\n\n'
         'SCHEMA:\n$schemaLines';
   }
