@@ -6,6 +6,7 @@ import '../models/db_schema_model.dart';
 import '../services/db_service.dart';
 import '../services/llm_service.dart';
 import '../services/schema_selector.dart';
+import '../services/sql_column_validator.dart';
 
 enum QueryResultStatus {
   success,
@@ -72,11 +73,16 @@ class QueryService {
     final debugTables =
         kDebugMode ? selectedTables.map((t) => t.tableName).toList() : null;
 
-    // ── Steps 2-5: generate → validate → execute, with self-correction ──────
+    // ── Steps 2-5: generate → check → validate → execute, with
+    // self-correction ─────────────────────────────────────────────────────
     // On failure at any stage, the specific error is fed back into the next
-    // generation attempt so the model can actually fix its mistake (wrong/
-    // non-existent column, unsafe keyword, etc.) instead of just re-rolling
-    // blind. Loops at most _maxAttempts times total.
+    // generation attempt so the model can actually fix its mistake instead
+    // of just re-rolling blind. Column/table hallucinations are now caught
+    // deterministically by SqlColumnValidator *before* ever touching the
+    // database — cheaper than a DB round-trip, and it produces a specific,
+    // actionable message ("table X has no column Y, actual columns are...")
+    // instead of a generic SQLite error string. Loops at most _maxAttempts
+    // times total.
     String? rawSql;
     String? lastError;
     List<Map<String, dynamic>>? rows;
@@ -133,6 +139,21 @@ class QueryService {
               'The information you asked for is not available in this database.',
           selectedTableNames: debugTables,
         );
+      }
+
+      // Deterministic pre-flight check: does every table/column referenced
+      // actually exist? Checked against the full schema (not just the
+      // tables the model was shown) so a hallucinated table/column is
+      // caught even if it happens to collide with something real elsewhere.
+      final columnError = SqlColumnValidator.check(rawSql, schema);
+      if (columnError != null) {
+        lastError = columnError;
+        if (kDebugMode) {
+          developer.log('Attempt $attempt: column check failed — $lastError',
+              name: 'QueryService');
+        }
+        if (attempt == _maxAttempts) break;
+        continue;
       }
 
       final validationError = _db.validateSql(rawSql);
@@ -197,7 +218,7 @@ class QueryService {
       summary = await _llm.summarizeResults(
         userQuestion: question,
         sqlQuery: rawSql!,
-        jsonRows: jsonRows,
+        rows: cappedRows,
         schemaName: schema.databaseName,
         onToken: onToken,
       );

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/db_schema_model.dart';
@@ -58,7 +59,9 @@ class LlmService {
   /// failed attempt), the prompt switches from "write a query" to "fix this
   /// specific query, here's exactly why it failed". This is what lets the
   /// self-correction loop in QueryService actually improve on retry instead
-  /// of just re-rolling the same mistake.
+  /// of just re-rolling the same mistake. [previousError] may come from the
+  /// deterministic column/table validator (specific: "table X has no column
+  /// Y, actual columns are...") or from a real SQLite execution error.
   Future<String> generateSql({
     required String userQuestion,
     required List<TableSchema> selectedTables,
@@ -97,23 +100,47 @@ class LlmService {
 
   // ── Summarization ─────────────────────────────────────────────────────────
 
+  /// [rows] — the (already row-capped) query results, passed as structured
+  /// data rather than a pre-serialized string so this method can inspect
+  /// their shape.
   Future<String> summarizeResults({
     required String userQuestion,
     required String sqlQuery,
-    required String jsonRows,
+    required List<Map<String, dynamic>> rows,
     required String schemaName,
     required void Function(String token) onToken,
   }) async {
     _assertLoaded();
 
+    final jsonRows = const JsonEncoder.withIndent('  ').convert(rows);
+
+    // Anchor fact: when the result is a single row with a single column —
+    // the shape of any COUNT/SUM/AVG/MIN/MAX-style aggregate query,
+    // regardless of what the underlying schema calls anything — extract
+    // that literal value here in Dart (deterministic, no model parsing
+    // involved) and hand it to the model as a fact to restate rather than
+    // derive. This is schema-agnostic: it's purely a structural check on
+    // row/column shape, not a hardcoded per-table template, so it keeps
+    // working if the schema is swapped for a different domain.
+    String? anchoredFact;
+    if (rows.length == 1 && rows.first.length == 1) {
+      final value = rows.first.values.first;
+      anchoredFact = 'The exact answer value is: $value. State this number '
+          'or value exactly as given — do not change, estimate, round, or '
+          'recalculate it.';
+    }
+    final factLine = anchoredFact != null ? '\n\n$anchoredFact' : '';
+
     final chat = await _model!.createChat(
       systemInstruction:
           'Explain these $schemaName query results in 1-3 plain sentences. '
           'If results are empty, say no matching records were found. '
-          'Only use the data given. No SQL terms.',
+          'Only use the data given — never invent, estimate, or alter any '
+          'numbers or values. No SQL terms.',
     );
 
-    final prompt = 'User asked: $userQuestion\n\nResults: $jsonRows\n\nSummary:';
+    final prompt = 'User asked: $userQuestion\n\n'
+        'Results (${rows.length} row(s)): $jsonRows$factLine\n\nSummary:';
 
     await chat.addQueryChunk(Message.text(text: prompt, isUser: true));
 

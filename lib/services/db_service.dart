@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../models/db_schema_model.dart';
@@ -16,7 +18,20 @@ class DbService {
   // ── Initialisation ──────────────────────────────────────────────────────────
 
   /// Copies the bundled .db from assets into the app's documents directory
-  /// (only on first run or if the file doesn't exist) and opens it read-only.
+  /// and opens it. The copy is refreshed — not just made once ever — when:
+  ///   - no copy exists yet (first run),
+  ///   - the bundled asset's byte size differs from what was last copied
+  ///     (a cheap, dependency-free way to detect "the seed data changed"),
+  ///   - or this is a debug build, so active development against a
+  ///     changing agri.db never silently keeps serving stale data on a
+  ///     device that had the app installed before the latest asset was
+  ///     bundled.
+  ///
+  /// Why this matters: the previous "only copy if the file doesn't already
+  /// exist" logic meant any device that had the app installed before a
+  /// seed-data update would run against the old copy forever — the exact
+  /// same query could return different results from the live app vs. a
+  /// fresh read of the current asset, with no error or indication why.
   Future<void> init(DatabaseSchema schema) async {
     if (_initialized) return;
 
@@ -26,13 +41,25 @@ class DbService {
     // Ensure directory exists
     await Directory(p.dirname(dbPath)).create(recursive: true);
 
-    // Copy from assets if not already present
-    if (!File(dbPath).existsSync()) {
-      final bytes = await rootBundle.load(schema.assetPath);
-      await File(dbPath).writeAsBytes(
-        bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+    final assetData = await rootBundle.load(schema.assetPath);
+    final assetSize = assetData.lengthInBytes;
+
+    final prefs = await SharedPreferences.getInstance();
+    final sizeKey = 'askbase_db_copied_size_${schema.dbFileName}';
+    final previouslyCopiedSize = prefs.getInt(sizeKey);
+
+    final dbFile = File(dbPath);
+    final needsCopy = kDebugMode ||
+        !dbFile.existsSync() ||
+        previouslyCopiedSize != assetSize;
+
+    if (needsCopy) {
+      await dbFile.writeAsBytes(
+        assetData.buffer
+            .asUint8List(assetData.offsetInBytes, assetData.lengthInBytes),
         flush: true,
       );
+      await prefs.setInt(sizeKey, assetSize);
     }
 
     _db = await openDatabase(
@@ -126,6 +153,9 @@ class DbService {
   /// numeric/boolean comparisons and columns compared to other columns are
   /// left untouched. Comparisons that already specify a COLLATE clause are
   /// skipped so this is idempotent and won't double up.
+  ///
+  /// Verified directly against SQLite: 'active' COLLATE NOCASE correctly
+  /// matches a stored 'Active' value where a plain '=' does not.
   ///
   /// Known limitation: does not currently rewrite `IN ('a', 'b')` lists or
   /// `LIKE` patterns — SQLite's `LIKE` is already case-insensitive for
