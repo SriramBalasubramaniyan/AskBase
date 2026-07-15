@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/db_schema_model.dart';
 import '../services/db_service.dart';
+import '../services/join_path_finder.dart';
 import '../services/llm_service.dart';
 import '../services/schema_selector.dart';
 import '../services/sql_column_validator.dart';
@@ -77,12 +78,13 @@ class QueryService {
     // self-correction ─────────────────────────────────────────────────────
     // On failure at any stage, the specific error is fed back into the next
     // generation attempt so the model can actually fix its mistake instead
-    // of just re-rolling blind. Column/table hallucinations are now caught
+    // of just re-rolling blind. Column/table hallucinations are caught
     // deterministically by SqlColumnValidator *before* ever touching the
-    // database — cheaper than a DB round-trip, and it produces a specific,
-    // actionable message ("table X has no column Y, actual columns are...")
-    // instead of a generic SQLite error string. Loops at most _maxAttempts
-    // times total.
+    // database. When that failure involves two tables that aren't directly
+    // related by a foreign key, JoinPathFinder computes the real bridging
+    // path and appends it as a concrete instruction — a plain error string
+    // alone wasn't enough for the model to work out multi-hop join
+    // reasoning on its own in practice. Loops at most _maxAttempts times.
     String? rawSql;
     String? lastError;
     List<Map<String, dynamic>>? rows;
@@ -147,7 +149,7 @@ class QueryService {
       // caught even if it happens to collide with something real elsewhere.
       final columnError = SqlColumnValidator.check(rawSql, schema);
       if (columnError != null) {
-        lastError = columnError;
+        lastError = _withJoinPathHint(columnError, rawSql, schema);
         if (kDebugMode) {
           developer.log('Attempt $attempt: column check failed — $lastError',
               name: 'QueryService');
@@ -240,5 +242,42 @@ class QueryService {
       rawJson: jsonRows,
       selectedTableNames: debugTables,
     );
+  }
+
+  /// If [sql] references two or more real tables that aren't directly
+  /// connected by a foreign key, appends the actual bridging join
+  /// condition(s) (found via BFS over the schema's FK graph) to
+  /// [baseError] so the next generation attempt can use it directly
+  /// instead of having to work out multi-hop join reasoning on its own.
+  String _withJoinPathHint(
+    String baseError,
+    String sql,
+    DatabaseSchema schema,
+  ) {
+    final tables = SqlColumnValidator.referencedTables(sql, schema);
+    if (tables.length < 2) return baseError;
+
+    final hints = <String>[];
+    for (var i = 0; i < tables.length; i++) {
+      for (var j = i + 1; j < tables.length; j++) {
+        final a = tables[i];
+        final b = tables[j];
+
+        final directlyLinked = a.fields
+                .any((f) => f.foreignKeyRef?.startsWith('${b.tableName}.') ?? false) ||
+            b.fields.any(
+                (f) => f.foreignKeyRef?.startsWith('${a.tableName}.') ?? false);
+        if (directlyLinked) continue;
+
+        final path = JoinPathFinder.findPath(schema, a.tableName, b.tableName);
+        if (path != null && path.isNotEmpty) {
+          hints.add('${a.tableName} and ${b.tableName} are not directly '
+              'related. To connect them: ${path.join(" AND ")}.');
+        }
+      }
+    }
+
+    if (hints.isEmpty) return baseError;
+    return '$baseError ${hints.join(" ")}';
   }
 }
