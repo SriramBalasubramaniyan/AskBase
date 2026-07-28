@@ -59,9 +59,9 @@ class LlmService {
   /// failed attempt), the prompt switches from "write a query" to "fix this
   /// specific query, here's exactly why it failed". [previousError] may
   /// come from the deterministic column/table validator (specific: "table X
-  /// has no column Y, actual columns are..."), a join-path hint appended by
-  /// QueryService when two tables in the query aren't directly related, or
-  /// a real SQLite execution error.
+  /// has no column Y, actual columns are..."), a ready-to-use join skeleton
+  /// appended by QueryService when two tables in the query aren't directly
+  /// related, or a real SQLite execution error.
   Future<String> generateSql({
     required String userQuestion,
     required List<TableSchema> selectedTables,
@@ -87,8 +87,9 @@ class LlmService {
             'Fix the query using the exact information in the error above. '
             'Use ONLY the exact table and column names listed in SCHEMA — '
             'do not invent or guess a name that isn\'t there. If the error '
-            'gives you a join path, use it exactly as given. If no valid '
-            'query is possible, output CANNOT_ANSWER.\n\nSQL:'
+            'gives you a join structure to use, copy it exactly as given — '
+            'do not modify it. If no valid query is possible, output '
+            'CANNOT_ANSWER.\n\nSQL:'
         : 'Question: $userQuestion\n\nSQL:';
 
     await chat.addQueryChunk(Message.text(text: userText, isUser: true));
@@ -101,9 +102,21 @@ class LlmService {
 
   // ── Summarization ─────────────────────────────────────────────────────────
 
-  /// [rows] — the (already row-capped) query results, passed as structured
-  /// data rather than a pre-serialized string so this method can inspect
-  /// their shape.
+  /// [rows] — the query results, passed as structured data rather than a
+  /// pre-serialized string so this method can inspect their shape.
+  ///
+  /// NOTE: the single-row/single-column shape (any COUNT/SUM/AVG/MIN/MAX
+  /// -style aggregate result) is now intercepted *before* this method is
+  /// ever called — see QueryService.ask(). That shape was the single
+  /// biggest source of unreliable output: the exact same deterministic SQL
+  /// and exact same value would sometimes be echoed correctly and
+  /// sometimes not, across otherwise-identical runs. Rather than continue
+  /// tuning a prompt the model doesn't reliably follow, QueryService now
+  /// constructs that answer directly from the value — guaranteed correct,
+  /// at the cost of slightly more mechanical phrasing for that one shape.
+  /// This method now only ever runs for genuinely multi-row or
+  /// multi-column results, where an LLM's summarization is actually adding
+  /// value rather than just being asked to parrot a single number.
   Future<String> summarizeResults({
     required String userQuestion,
     required String sqlQuery,
@@ -113,55 +126,55 @@ class LlmService {
   }) async {
     _assertLoaded();
 
-    final jsonRows = const JsonEncoder.withIndent('  ').convert(rows);
+    // Deterministic display cap: only ever serialize the first 5 rows into
+    // the prompt for multi-row results, with the true total stated as a
+    // separate fact. A prose instruction asking the model to "list at most
+    // 5" was tried and ignored in practice (an 18-row result was listed in
+    // full) — capping what it's actually given can't be ignored the way an
+    // instruction can, and it also keeps the prompt short for large result
+    // sets, which helps against truncation/repetition risk too.
+    const displayCap = 5;
+    final totalCount = rows.length;
+    final wasTruncated = totalCount > displayCap;
+    final displayRows = wasTruncated ? rows.sublist(0, displayCap) : rows;
 
-    // Anchor fact: when the result is a single row with a single column —
-    // the shape of any COUNT/SUM/AVG/MIN/MAX-style aggregate query,
-    // regardless of what the underlying schema calls anything — extract
-    // that literal value here in Dart (deterministic, no model parsing
-    // involved) and hand it to the model as a fact to restate rather than
-    // derive. This is schema-agnostic: it's purely a structural check on
-    // row/column shape, not a hardcoded per-table template.
-    //
-    // Guarded against ID-like columns: if that single value came from a
-    // column named "id" or ending in "_id", it's a reference number, not
-    // an answer to restate — anchoring it would directly conflict with the
-    // "never state bare IDs" rule below by forcing the model to prominently
-    // repeat it. In that case there's no anchor; the SQL-generation prompt
-    // change below (prefer descriptive columns) is the real fix for why an
-    // ID-only result shape happens in the first place.
-    String? anchoredFact;
-    if (rows.length == 1 && rows.first.length == 1) {
-      final singleKey = rows.first.keys.first.toLowerCase();
-      final looksLikeId = singleKey == 'id' || singleKey.endsWith('_id');
-      if (!looksLikeId) {
-        final value = rows.first.values.first;
-        anchoredFact = 'The exact answer value is: $value. State this '
-            'number or value exactly as given — do not change, estimate, '
-            'round, or recalculate it.';
-      }
-    }
-    final factLine = anchoredFact != null ? '\n\n$anchoredFact' : '';
+    final jsonRows = const JsonEncoder.withIndent('  ').convert(displayRows);
+
+    final factLine = wasTruncated
+        ? '\n\nThere are $totalCount matching records in total. Only the '
+            'first $displayCap are included below — state the total count '
+            'once, then list only these $displayCap as bullets. Do not '
+            'claim any other total.'
+        : '';
 
     final chat = await _model!.createChat(
       systemInstruction:
-          'Explain these $schemaName query results in 1-3 plain sentences. '
-          'If results are empty, say no matching records were found. '
-          'Only use the data given — never invent, estimate, or alter any '
-          'numbers or values. '
+          'Explain these $schemaName query results in a clear, '
+          'well-formatted answer, based only on the actual values in the '
+          'data. Never describe the data\'s structure or position (e.g. '
+          '"in the first row", "in the first column", "listed above") — '
+          'always state the real values themselves. '
+          'If results are empty, say no matching records were found. Never '
+          'invent, estimate, or alter any numbers or values. '
           'Never mention ID numbers, primary keys, or reference numbers '
           '(any field named "id" or ending in "_id") unless the user '
           'explicitly asked for one — refer to records by their name or '
           'another descriptive detail in the data instead. If no '
           'descriptive detail is available, refer to the record generically '
           '(e.g. "the top result") rather than by its ID. '
-          'If there are many rows, summarize with a total count and a few '
-          'representative examples instead of listing every single one. '
-          'No SQL terms.',
+          'If there is only one result, answer in 1-3 plain sentences. '
+          'If there are multiple results, format the answer as a markdown '
+          'bullet list. Keep each bullet to just the essential value(s) for '
+          'that record — do not repeat the question\'s own wording in '
+          'every bullet (e.g. if asked "which farmers attended training", '
+          'list bare names, not "X attended training" repeated for each '
+          'one). No SQL terms.',
     );
 
     final prompt = 'User asked: $userQuestion\n\n'
-        'Results (${rows.length} row(s)): $jsonRows$factLine\n\nSummary:';
+        'Results ($totalCount row(s) total'
+        '${wasTruncated ? ", showing first $displayCap" : ""}): '
+        '$jsonRows$factLine\n\nSummary:';
 
     await chat.addQueryChunk(Message.text(text: prompt, isUser: true));
 
@@ -224,13 +237,34 @@ class LlmService {
         'Rules: SELECT only. Use ONLY the exact table and column names '
         'listed below — never invent, guess, or assume a column exists just '
         'because it seems plausible. If a needed column truly isn\'t listed, '
-        'output CANNOT_ANSWER instead of guessing. Use aliases in JOINs. '
-        'When the question is about a specific record (e.g. finding a '
-        'top/most/least/best result, or a named entity), also SELECT that '
-        'table\'s name or other descriptive column if one exists — not '
-        'only its ID column. Also SELECT any column used in ORDER BY or an '
-        'aggregate function, so the result actually contains the value '
-        'being ranked or computed, not just an identifier. '
+        'output CANNOT_ANSWER instead of guessing. '
+        'If a column\'s description lists specific allowed values in '
+        'parentheses, any comparison against that column must use one of '
+        'those exact values verbatim — never a similar-sounding or '
+        'invented value. '
+        'For questions using "most", "least", "highest", "lowest", "top", '
+        'or "best", ORDER BY (or use MAX()/MIN() on) the column that '
+        'actually measures that quantity (an amount, quantity, price, or '
+        'count column) — never an ID column. Sorting or taking MAX/MIN of '
+        'an ID column does not mean "the most" or "the least" of anything '
+        'real. '
+        'Only JOIN a table if you need a column from it. If you do JOIN a '
+        'table, SELECT its name or other descriptive column — never join a '
+        'table and then use nothing from it. '
+        'For ANY question — list/show-style or otherwise, with or without '
+        'a JOIN — SELECT several of the relevant table\'s substantive '
+        'columns (amounts, dates, types, statuses, categories, names, '
+        'descriptions), not just an identifier; a result containing only '
+        'ID/reference-number columns is never useful. Also SELECT any '
+        'column used in ORDER BY or an aggregate function, so the result '
+        'actually contains the value being ranked or computed. '
+        'For questions asking "which"/"who" about a set of entities (not '
+        'asking to count individual events), use SELECT DISTINCT so each '
+        'entity appears once even if it has multiple related records. '
+        'If the question uses words like "each", "every", "per", or asks '
+        'for a breakdown/list across entities (e.g. "how many X does each '
+        'Y have"), GROUP BY that entity and return one row per entity — '
+        'not a single overall total. '
         'LIMIT 100 if unspecified. Dates are TEXT YYYY-MM-DD.\n\n'
         'SCHEMA:\n$schemaLines';
   }

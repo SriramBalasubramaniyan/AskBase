@@ -131,9 +131,22 @@ class _ChatScreenState extends State<ChatScreen> {
         if (state.messages.isNotEmpty)
           IconButton(
             icon: const Icon(Icons.delete_outline_rounded, size: 20),
-            color: AppColors.textSecondary,
-            tooltip: 'Clear chat',
-            onPressed: () => _confirmClear(context, state),
+            // Disabled (not just cosmetically greyed) while a response is
+            // generating: there's no cancellation hook into the in-flight
+            // model call, so clearing the chat mid-generation left the
+            // message list empty while the "generating" indicator kept
+            // running in the background until that call finally resolved.
+            // Making the action unreachable during generation avoids that
+            // confusing state entirely, rather than trying to reconcile it
+            // after the fact.
+            color: state.isProcessing
+                ? AppColors.textMuted
+                : AppColors.textSecondary,
+            tooltip: state.isProcessing
+                ? 'Wait for the response to finish'
+                : 'Clear chat',
+            onPressed:
+                state.isProcessing ? null : () => _confirmClear(context, state),
           ),
         const SizedBox(width: 8),
       ],

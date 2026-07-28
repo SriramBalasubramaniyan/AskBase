@@ -19,10 +19,15 @@ import '../models/db_schema_model.dart';
 ///      payment_date FROM sale`, which has no `payment_date`, only
 ///      `sale_date`; or `WHERE status = 'PENDING'` on `sale`, which only
 ///      has `payment_status`).
-/// Anything it can't confidently parse (subqueries, unusual syntax) is
-/// left alone — it falls through to the existing execution-time error
-/// handling, so this can only catch problems earlier, never introduce
-/// new false failures on SQL it doesn't understand.
+/// Subquery interiors (parenthesized `SELECT ...` blocks, e.g. inside an
+/// `IN (...)`) are masked out before any of the above runs — otherwise a
+/// subquery's own FROM/JOIN silently makes the outer query look like a
+/// multi-table query, which disables the single-table unqualified-column
+/// check for the *outer* query too and lets a real hallucination through.
+/// Anything this still can't confidently parse (unusual syntax) is left
+/// alone — it falls through to the existing execution-time error
+/// handling, so this can only catch problems earlier, never introduce new
+/// false failures on SQL it doesn't understand.
 class SqlColumnValidator {
   SqlColumnValidator._();
 
@@ -55,6 +60,9 @@ class SqlColumnValidator {
   static final RegExp _asKeywordPattern =
       RegExp(r'\s+AS\s+', caseSensitive: false);
 
+  static final RegExp _selectKeywordPattern =
+      RegExp(r'^SELECT\b', caseSensitive: false);
+
   /// Words that can legally appear right after a table name in a FROM/JOIN
   /// clause without being an alias — so "FROM farmer WHERE ..." doesn't
   /// get misread as table "farmer" aliased to "where".
@@ -79,7 +87,8 @@ class SqlColumnValidator {
   /// check didn't find a problem (which does not guarantee the SQL is
   /// otherwise valid — only that this particular check passed).
   static String? check(String sql, DatabaseSchema schema) {
-    final aliasMap = _extractTableAliases(sql, schema);
+    final masked = _maskSubqueries(sql);
+    final aliasMap = _extractTableAliases(masked, schema);
     if (aliasMap.isEmpty) return null; // couldn't parse FROM/JOIN confidently
 
     // Unknown tables referenced in FROM/JOIN.
@@ -93,7 +102,7 @@ class SqlColumnValidator {
 
     // Qualified alias.column references — checked across the whole query
     // (SELECT list, JOIN...ON, WHERE, ORDER BY, etc).
-    for (final m in _qualifiedRefPattern.allMatches(sql)) {
+    for (final m in _qualifiedRefPattern.allMatches(masked)) {
       final alias = m.group(1)!;
       final col = m.group(2)!;
       if (!aliasMap.containsKey(alias)) continue; // not a known alias, skip
@@ -113,14 +122,15 @@ class SqlColumnValidator {
 
     if (distinctTableNames.length == 1) {
       final table = involvedTables.first;
-      final upperSql = sql.toUpperCase();
+      final upperMasked = masked.toUpperCase();
 
       // SELECT-list check.
-      final selectStart = upperSql.indexOf('SELECT');
-      final fromStart = upperSql.indexOf('FROM');
+      final selectStart = upperMasked.indexOf('SELECT');
+      final fromStart = upperMasked.indexOf('FROM');
       if (selectStart != -1 && fromStart != -1 && fromStart > selectStart) {
-        var selectClause =
-            sql.substring(selectStart + 'SELECT'.length, fromStart).trim();
+        var selectClause = masked
+            .substring(selectStart + 'SELECT'.length, fromStart)
+            .trim();
         if (selectClause.toUpperCase().startsWith('DISTINCT')) {
           selectClause = selectClause.substring('DISTINCT'.length).trim();
         }
@@ -130,9 +140,9 @@ class SqlColumnValidator {
       }
 
       // WHERE-clause check.
-      final whereStart = upperSql.indexOf('WHERE');
+      final whereStart = upperMasked.indexOf('WHERE');
       if (whereStart != -1) {
-        final whereClause = sql.substring(whereStart);
+        final whereClause = masked.substring(whereStart);
         final candidates = _whereComparisonPattern
             .allMatches(whereClause)
             .map((m) => m.group(1)!)
@@ -146,11 +156,13 @@ class SqlColumnValidator {
   }
 
   /// Returns the distinct real tables referenced via FROM/JOIN in [sql]
-  /// (tables that don't resolve to anything real are omitted). Exposed so
-  /// other components — e.g. join-path hinting on a validation failure —
-  /// can reuse this parsing without duplicating it.
+  /// (subquery interiors masked out first, tables that don't resolve to
+  /// anything real omitted). Exposed so other components — e.g. join-path
+  /// hinting on a validation failure — can reuse this parsing without
+  /// duplicating it.
   static List<TableSchema> referencedTables(String sql, DatabaseSchema schema) {
-    final aliasMap = _extractTableAliases(sql, schema);
+    final masked = _maskSubqueries(sql);
+    final aliasMap = _extractTableAliases(masked, schema);
     final seen = <String>{};
     final result = <TableSchema>[];
     for (final table in aliasMap.values) {
@@ -161,6 +173,49 @@ class SqlColumnValidator {
   }
 
   // ── Internals ────────────────────────────────────────────────────────────
+
+  /// Replaces the contents of any parenthesized `(SELECT ...)` block with
+  /// blank space of the same length (parens kept, so overall shape/offsets
+  /// are undisturbed), so subquery FROM/JOIN/column references never leak
+  /// into the outer query's table/column analysis. Doesn't validate the
+  /// subquery itself — just stops it from corrupting the outer check.
+  static String _maskSubqueries(String sql) {
+    final buffer = StringBuffer();
+    var i = 0;
+    while (i < sql.length) {
+      final c = sql[i];
+      if (c == '(') {
+        final end = _findMatchingParen(sql, i);
+        if (end != -1) {
+          final inner = sql.substring(i + 1, end).trimLeft();
+          if (_selectKeywordPattern.hasMatch(inner)) {
+            buffer.write('(');
+            buffer.write(' ' * (end - i - 1));
+            buffer.write(')');
+            i = end + 1;
+            continue;
+          }
+        }
+      }
+      buffer.write(c);
+      i++;
+    }
+    return buffer.toString();
+  }
+
+  /// Returns the index of the `)` matching the `(` at [openIndex], or -1
+  /// if unbalanced.
+  static int _findMatchingParen(String s, int openIndex) {
+    var depth = 0;
+    for (var i = openIndex; i < s.length; i++) {
+      if (s[i] == '(') depth++;
+      if (s[i] == ')') {
+        depth--;
+        if (depth == 0) return i;
+      }
+    }
+    return -1;
+  }
 
   static String? _checkIdentifiers(
     Iterable<String> candidates,
@@ -226,7 +281,8 @@ class SqlColumnValidator {
 
   /// Maps every alias (and each table's own bare name) used in FROM/JOIN
   /// clauses to its resolved [TableSchema], or to null if it doesn't
-  /// match any real table in [schema].
+  /// match any real table in [schema]. Expects subquery interiors to
+  /// already be masked out by the caller.
   static Map<String, TableSchema?> _extractTableAliases(
     String sql,
     DatabaseSchema schema,

@@ -57,9 +57,7 @@ class DownloadScreen extends StatelessWidget {
               const _InfoCard(
                 rows: [
                   ('Model', 'Qwen2.5-0.5B'),
-                  ('Download size', '~547 MB'),
-                  ('Stored in', 'App private storage'),
-                  ('Internet after setup', 'Not required'),
+                  ('Download size', '~547 MB')
                 ],
               ),
 
